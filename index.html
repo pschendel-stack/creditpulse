@@ -1,0 +1,1638 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CreditPulse</title>
+<meta name="application-name" content="CreditPulse">
+<meta name="theme-color" content="#E50914">
+<meta name="msapplication-TileColor" content="#E50914">
+<meta name="msapplication-config" content="/browserconfig.xml">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="mask-icon" href="/safari-pinned-tab.svg" color="#E50914">
+<link rel="manifest" href="/site.webmanifest">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<!-- Vercel Web Analytics (plain-HTML variant; the React package is for Next.js apps) -->
+<script>
+  window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
+</script>
+<script defer src="/_vercel/insights/script.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:       #f7f6f2;
+    --surface:  #ffffff;
+    --border:   #e5e4de;
+    --text:     #0b0b0b;
+    --muted:    #898781;
+    --accent:   #1a56db;
+    --danger:   #c81e1e;
+    --warn:     #9e5a03;
+    --ok:       #085041;
+    --tag-bg:   #eef2ff;
+    --tag-text: #3730a3;
+  }
+
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+         background: var(--bg); color: var(--text); min-height: 100vh; }
+
+  /* ── HEADER ── */
+  .site-header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 32px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .logo { font-size: 18px; font-weight: 700; letter-spacing: -0.02em; }
+  .logo span { color: var(--accent); }
+  .header-sub { font-size: 12px; color: var(--muted); margin-left: 4px; }
+
+  /* ── SEARCH ── */
+  .search-wrap {
+    max-width: 680px;
+    margin: 48px auto 0;
+    padding: 0 24px;
+    text-align: center;
+  }
+  .search-headline { font-size: 28px; font-weight: 700; margin-bottom: 8px; }
+  .search-sub { font-size: 14px; color: var(--muted); margin-bottom: 28px; }
+  .search-row { display: flex; gap: 8px; }
+  .search-input {
+    flex: 1;
+    padding: 12px 16px;
+    font-size: 16px;
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    outline: none;
+    text-transform: uppercase;
+    background: var(--surface);
+    transition: border-color .15s;
+  }
+  .search-input:focus { border-color: var(--accent); }
+  .search-btn {
+    padding: 12px 24px;
+    font-size: 15px;
+    font-weight: 600;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: opacity .15s;
+  }
+  .search-btn:hover { opacity: .88; }
+  .search-btn:disabled { opacity: .5; cursor: not-allowed; }
+  .examples { margin-top: 12px; font-size: 12px; color: var(--muted); }
+  .examples a { color: var(--accent); cursor: pointer; text-decoration: none; }
+  .examples a:hover { text-decoration: underline; }
+
+  /* ── STATES ── */
+  .state { max-width: 680px; margin: 64px auto; padding: 0 24px; text-align: center; }
+  .spinner {
+    width: 36px; height: 36px;
+    border: 3px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin .7s linear infinite;
+    margin: 0 auto 16px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .state-msg { font-size: 14px; color: var(--muted); }
+  .error-box {
+    background: #fff5f5;
+    border: 1px solid #fca5a5;
+    border-radius: 8px;
+    padding: 16px 20px;
+    color: var(--danger);
+    font-size: 14px;
+  }
+
+  /* ── RESULTS ── */
+  #results { max-width: 1100px; margin: 40px auto 80px; padding: 0 24px; display: none; }
+
+  .fund-header {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 4px;
+  }
+  .fund-name { font-size: 22px; font-weight: 700; }
+  .fund-tag {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    background: var(--tag-bg);
+    color: var(--tag-text);
+    padding: 3px 8px;
+    border-radius: 999px;
+  }
+  .fund-meta { font-size: 13px; color: var(--muted); margin-bottom: 24px; }
+  .fund-meta a { color: var(--accent); }
+
+  /* ── STAT CARDS ── */
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 28px; }
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 20px;
+  }
+  .stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px; }
+  .stat-value { font-size: 26px; font-weight: 700; }
+  .stat-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .stat-value.danger { color: var(--danger); }
+  .stat-value.warn   { color: var(--warn); }
+  .score-section { border-color: #d8dee8; }
+  .score-layout { display: grid; grid-template-columns: 280px 1fr; gap: 18px; align-items: stretch; }
+  .score-hero {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px;
+    background: var(--bg);
+  }
+  .score-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+  .score-number { font-size: 56px; line-height: 1; font-weight: 800; margin: 8px 0 4px; }
+  .score-category { font-size: 18px; font-weight: 700; }
+  .score-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; font-size: 11px; color: var(--muted); }
+  .score-pill { border: 1px solid var(--border); border-radius: 999px; padding: 3px 8px; background: var(--surface); }
+  .score-exceptional, .score-strong { color: var(--ok); }
+  .score-stable { color: var(--accent); }
+  .score-watch { color: var(--warn); }
+  .score-weak, .score-distressed { color: var(--danger); }
+  .score-summary { font-size: 13px; line-height: 1.5; margin-bottom: 12px; }
+  .score-drivers { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+  .driver-box { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--surface); }
+  .driver-title { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 6px; }
+  .driver-box ul { margin-left: 16px; font-size: 12px; line-height: 1.45; }
+  .score-method details { margin-top: 12px; font-size: 12px; color: var(--muted); }
+  .score-method summary { cursor: pointer; color: var(--accent); font-weight: 600; }
+  .component-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12px; }
+  .component-table th, .component-table td { border-bottom: 1px solid var(--border); padding: 5px 6px; text-align: right; }
+  .component-table th:first-child, .component-table td:first-child { text-align: left; }
+
+  /* ── SECTION BLOCKS ── */
+  .section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 24px;
+    margin-bottom: 20px;
+  }
+  .section-title {
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--muted);
+    margin-bottom: 16px;
+  }
+
+  /* ── BUCKET CHARTS ── */
+  .bucket-toggle-row { display: flex; justify-content: flex-end; margin-bottom: 8px; }
+  .mode-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .mode-btn {
+    padding: 4px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    background: var(--surface);
+    color: var(--muted);
+    border: none;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .mode-btn + .mode-btn { border-left: 1px solid var(--border); }
+  .mode-btn.active { background: var(--accent); color: #fff; }
+  .charts-grid { display: grid; grid-template-columns: 1.7fr 1fr; gap: 20px; margin-bottom: 20px; }
+  .chart-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 24px;
+  }
+  .bucket-chart-wrap { height: 360px; }
+  .chart-title { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 16px; }
+  .position-scatter-head { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; margin-bottom: 10px; }
+  .position-scatter-meta { font-size: 12px; color: var(--muted); }
+  .position-legend { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 10px; font-size: 11px; color: var(--muted); }
+  .legend-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 4px; vertical-align: -1px; }
+  .position-chart-wrap { height: 210px; }
+  .position-note { font-size: 12px; line-height: 1.45; color: var(--muted); margin-top: 12px; }
+  .realized-loss-chart-wrap,
+  .cum-realized-chart-wrap { height: 300px; }
+
+  /* ── ROLL-RATE ── */
+  .period-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px; }
+  .period-tab {
+    padding: 5px 12px;
+    font-size: 12px;
+    font-weight: 500;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+    background: var(--bg);
+    transition: all .15s;
+  }
+  .period-tab.active {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+  }
+
+  .matrix-wrap { overflow-x: auto; }
+  table.matrix {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    table-layout: fixed;
+  }
+  table.matrix th, table.matrix td {
+    padding: 6px 8px;
+    text-align: right;
+    border: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  table.matrix th { background: var(--bg); font-weight: 600; text-align: center; }
+  table.matrix td.row-label { text-align: left; font-weight: 600; background: var(--bg); }
+  table.matrix td.diagonal { background: #dbeafe; }
+  table.matrix td.worsen   { background: #fee2e2; }
+  table.matrix td.improve  { background: #dcfce7; }
+  table.matrix td.exit-col { background: #fef9c3; }
+  table.matrix td.entry-row { background: #f3e8ff; }
+  table.matrix td.zero     { color: #ccc; }
+
+  .rate-bar-row { display: flex; gap: 20px; margin-top: 16px; flex-wrap: wrap; }
+  .rate-item { flex: 1; min-width: 120px; }
+  .rate-label { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+  .rate-val { font-size: 20px; font-weight: 700; }
+  .rate-val.danger { color: var(--danger); }
+  .rate-val.ok     { color: var(--ok); }
+  .rate-val.muted  { color: var(--muted); }
+
+  .realized-grid { display: grid; grid-template-columns: 1.5fr 1fr; gap: 18px; align-items: start; }
+  .gains-tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 18px; }
+  .gains-tiles .stat-card { background: var(--bg); }
+  .gains-tiles .stat-value { font-size: 22px; }
+  .stat-value.ok { color: var(--ok); }
+  .realized-insight { font-size: 13px; line-height: 1.45; color: var(--text); margin-bottom: 12px; }
+  .source-note { font-size: 11px; line-height: 1.4; color: var(--muted); margin-top: 12px; }
+  table.realized {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  table.realized th {
+    padding: 6px 8px;
+    text-align: right;
+    color: var(--muted);
+    font-weight: 600;
+    border-bottom: 1px solid var(--border);
+  }
+  table.realized th:first-child { text-align: left; }
+  table.realized td {
+    padding: 6px 8px;
+    text-align: right;
+    border-bottom: 1px solid var(--border);
+  }
+  table.realized td:first-child { text-align: left; font-weight: 500; }
+  table.realized tr:last-child td { border-bottom: none; }
+
+  /* ── STRESS TABLE ── */
+  table.stress {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  table.stress th {
+    padding: 6px 10px;
+    text-align: right;
+    border-bottom: 2px solid var(--border);
+    font-size: 11px;
+    color: var(--muted);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+  }
+  table.stress th:first-child { text-align: left; }
+  table.stress td {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+    text-align: right;
+    vertical-align: middle;
+  }
+  table.stress td:first-child { text-align: left; font-weight: 500; }
+  table.stress tr:last-child td { border-bottom: none; }
+  table.stress tr:hover td { background: var(--bg); }
+
+  .section-badge {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+  }
+  .section-badge.migrated { background: #fef3c7; color: #92400e; }
+  .section-badge.stressed  { background: #fee2e2; color: #991b1b; }
+  .section-badge.new       { background: #f3e8ff; color: #6b21a8; }
+  .section-row td { padding-top: 12px; }
+
+  .mark-chip {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 5px;
+    font-weight: 700;
+    font-size: 11px;
+  }
+  .cached-badge {
+    font-size: 11px;
+    color: var(--muted);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 3px 8px;
+    margin-left: 8px;
+  }
+
+  /* ── PDF EXPORT ── */
+  .pdf-btn {
+    margin-left: auto;
+    padding: 6px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent);
+    background: var(--surface);
+    border: 1.5px solid var(--accent);
+    border-radius: 7px;
+    cursor: pointer;
+    transition: all .15s;
+    white-space: nowrap;
+  }
+  .pdf-btn:hover { background: var(--accent); color: #fff; }
+
+  .print-header,
+  .print-footer { display: none; }
+
+  @media print {
+    @page { size: letter; margin: 11mm 11mm 14mm; }
+    body { background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .site-header, .search-wrap, .state, .period-tabs, .no-print { display: none !important; }
+    #results { max-width: 100%; margin: 0; padding: 0; }
+    .print-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      border-bottom: 2px solid #0b0b0b;
+      padding-bottom: 6px;
+      margin-bottom: 14px;
+      font-size: 11px;
+      color: #555;
+    }
+    .print-header .print-logo { font-size: 16px; font-weight: 700; color: #0b0b0b; }
+    .print-header .print-logo span { color: var(--accent); }
+    .print-footer {
+      display: block;
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      padding-top: 4px;
+      border-top: 1px solid #ddd;
+      font-size: 9px;
+      color: #666;
+      text-align: right;
+    }
+    .section, .chart-panel, .stat-card { box-shadow: none; page-break-inside: avoid; break-inside: avoid; }
+    .charts-grid { page-break-inside: avoid; break-inside: avoid; }
+    .stress-section { page-break-before: always; break-before: page; }
+    .fund-name { font-size: 18px; }
+    .fund-meta { margin-bottom: 14px; }
+    .stat-value { font-size: 20px; }
+    .stats { gap: 8px; margin-bottom: 14px; }
+    .section { padding: 12px 16px; margin-bottom: 12px; }
+    .score-layout { grid-template-columns: 210px 1fr; gap: 10px; }
+    .score-hero { padding: 12px; }
+    .score-number { font-size: 42px; }
+    .score-category { font-size: 14px; }
+    .score-summary { font-size: 11px; line-height: 1.35; margin-bottom: 8px; }
+    .score-drivers { gap: 8px; }
+    .driver-box { padding: 7px 9px; }
+    .driver-box ul { font-size: 10px; line-height: 1.35; }
+    .component-table { font-size: 10px; }
+    .component-table th, .component-table td { padding: 3px 5px; }
+    .chart-panel { padding: 12px 16px; }
+    .charts-grid { gap: 12px; margin-bottom: 12px; }
+    table.matrix { font-size: 9px; }
+    table.matrix th, table.matrix td { padding: 3px 5px; }
+    table.stress { font-size: 9px; }
+    table.stress td, table.stress th { padding: 3px 6px; }
+    .realized-section { page-break-before: always; break-before: page; }
+    .realized-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
+    .gains-tiles { gap: 8px; margin-bottom: 10px; }
+    .realized-section { padding: 9px 14px; }
+    .realized-section .section-title { margin-bottom: 10px; }
+    .realized-section .gains-tiles .stat-card { padding: 10px 12px; border-radius: 8px; }
+    .realized-section .gains-tiles .stat-label { font-size: 10px; margin-bottom: 3px; }
+    .realized-section .gains-tiles .stat-value { font-size: 18px; line-height: 1.15; }
+    .realized-section .gains-tiles .stat-sub { font-size: 10px; line-height: 1.25; }
+    .realized-section .chart-title { margin: 8px 0 4px; font-size: 11px; }
+    .print-chart-img { width: 100%; object-fit: contain; object-position: center top; }
+    .realized-section .print-chart-img {
+      width: calc(100% + 72px);
+      max-width: none;
+      margin-left: -36px;
+    }
+    .print-realizedLossChart { height: 340px !important; }
+    .print-cumRealizedChart { height: 135px !important; }
+    .realized-insight { font-size: 12px; line-height: 1.35; margin-bottom: 8px; }
+    table.realized { font-size: 9px; }
+    table.realized td, table.realized th { padding: 3px 5px; }
+    .rate-val { font-size: 15px; }
+    .rate-bar-row { margin-top: 10px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="site-header">
+  <div class="logo">Credit<span>Pulse</span></div>
+  <div class="header-sub">BDC &amp; Interval Fund Analyzer · Powered by SEC EDGAR</div>
+</header>
+
+<div class="search-wrap" id="searchWrap">
+  <h1 class="search-headline">Analyze any credit fund</h1>
+  <p class="search-sub">Enter a ticker to see mark buckets, roll-rate analysis, and stressed positions across 6 quarters of SEC filings.</p>
+  <div class="search-row">
+    <input type="text" class="search-input" id="tickerInput" placeholder="CCLFX" maxlength="10" autocomplete="off" autocorrect="off" spellcheck="false">
+    <button class="search-btn" id="searchBtn" onclick="doAnalyze()">Analyze</button>
+  </div>
+  <p class="examples">
+    Try:
+    <a onclick="runTicker('CCLFX')">CCLFX</a> ·
+    <a onclick="runTicker('CRDIX')">CRDIX</a> ·
+    <a onclick="runTicker('ARCC')">ARCC</a> ·
+    <a onclick="runTicker('GSBD')">GSBD</a> ·
+    <a onclick="runTicker('ORCC')">ORCC</a>
+  </p>
+</div>
+
+<div class="state" id="loadingState" style="display:none">
+  <div class="spinner"></div>
+  <p class="state-msg" id="loadingMsg">Fetching SEC filings…</p>
+</div>
+
+<div class="state" id="errorState" style="display:none">
+  <div class="error-box" id="errorMsg"></div>
+</div>
+
+<div id="results"></div>
+
+<script>
+const API = '/api/analyze';
+
+// ── MARK COLOR ──────────────────────────────────────────────────────────────
+function markColor(v) {
+  if (v === null || v === undefined) return ['#f5f4f0', '#aaa'];
+  if (v >= 100) return ['#d1f0df', '#085041'];
+  if (v >= 90)  return ['#d1f0df', '#085041'];
+  if (v >= 80)  return ['#faeeda', '#633806'];
+  if (v >= 70)  return ['#fac775', '#412402'];
+  if (v >= 60)  return ['#f09595', '#501313'];
+  return           ['#e24b4a', '#ffffff'];
+}
+
+function markChip(v) {
+  if (v === null || v === undefined) return '<span style="color:#ccc">—</span>';
+  const [bg, fg] = markColor(v);
+  return `<span class="mark-chip" style="background:${bg};color:${fg}">${v.toFixed(0)}</span>`;
+}
+
+// ── SEARCH ──────────────────────────────────────────────────────────────────
+function runTicker(t) {
+  document.getElementById('tickerInput').value = t;
+  doAnalyze();
+}
+
+document.getElementById('tickerInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') doAnalyze();
+});
+
+async function doAnalyze(forceRefresh = false) {
+  const ticker = document.getElementById('tickerInput').value.trim().toUpperCase();
+  if (!ticker) return;
+
+  setLoading(true, 'Fetching SEC filings…');
+  clearError();
+  document.getElementById('results').style.display = 'none';
+
+  try {
+    const url = `${API}?ticker=${encodeURIComponent(ticker)}${forceRefresh ? '&refresh=true' : ''}`;
+    const res = await fetch(url);
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.detail || `HTTP ${res.status}`);
+    }
+
+    setLoading(false);
+    renderResults(data);
+  } catch (err) {
+    setLoading(false);
+    showError(err.message || 'Unknown error');
+  }
+}
+
+function setLoading(on, msg = '') {
+  document.getElementById('loadingState').style.display = on ? 'block' : 'none';
+  document.getElementById('loadingMsg').textContent = msg;
+  document.getElementById('searchBtn').disabled = on;
+}
+
+function clearError() {
+  document.getElementById('errorState').style.display = 'none';
+}
+
+function showError(msg) {
+  document.getElementById('errorState').style.display = 'block';
+  document.getElementById('errorMsg').textContent = msg;
+}
+
+// ── PDF EXPORT ───────────────────────────────────────────────────────────────
+// Swaps chart canvases for static images (canvases misrender in print), opens
+// the print dialog (destination "Save as PDF"), then restores the live charts.
+function nextPaint() {
+  return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+}
+
+function formatPrintTimestamp(d = new Date()) {
+  return d.toLocaleString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  });
+}
+
+async function downloadPDF() {
+  [scoreChartInst, positionScatterChartInst, stressChartInst, nearparChartInst, realizedLossChartInst, cumRealizedChartInst, leverageChartInst]
+    .filter(Boolean)
+    .forEach(chart => chart.update('none'));
+  await nextPaint();
+
+  const swaps = [];
+  const decodes = [];
+  document.querySelectorAll('#results canvas').forEach(cv => {
+    const img = document.createElement('img');
+    img.src = cv.toDataURL('image/png');
+    img.className = `print-chart-img print-${cv.id || 'chart'}`;
+    img.style.width = '100%';
+    img.style.display = 'block';
+    img.style.height = 'auto';
+    if (img.decode) {
+      decodes.push(img.decode().catch(() => {}));
+    } else {
+      decodes.push(new Promise(resolve => {
+        img.onload = resolve;
+        img.onerror = resolve;
+      }));
+    }
+    swaps.push([cv, img]);
+  });
+  await Promise.all(decodes);
+
+  const oldTitle = document.title;
+  document.title = '';
+  const printedAt = document.getElementById('printGeneratedAt');
+  if (printedAt) printedAt.textContent = formatPrintTimestamp();
+  swaps.forEach(([cv, img]) => {
+    cv.parentNode.replaceChild(img, cv);
+  });
+  await nextPaint();
+
+  const restore = () => {
+    swaps.forEach(([cv, img]) => {
+      if (img.parentNode) img.parentNode.replaceChild(cv, img);
+    });
+    document.title = oldTitle;
+    window.onafterprint = null;
+  };
+  window.onafterprint = restore;
+
+  window.print();
+  // Fallback for browsers where print() returns before the dialog closes
+  setTimeout(restore, 2000);
+}
+
+// ── RENDER ──────────────────────────────────────────────────────────────────
+let scoreChartInst = null, positionScatterChartInst = null, stressChartInst = null, nearparChartInst = null, realizedLossChartInst = null, cumRealizedChartInst = null, leverageChartInst = null;
+
+function renderResults(d) {
+  const el = document.getElementById('results');
+  const qtrs = d.quarters;
+  const sum  = d.summary;
+  const b    = d.buckets;
+  const rr   = d.rollrate;
+  const sp   = d.stress_positions;
+  const rl   = d.realized_losses;
+  const cs   = d.credit_score;
+  const ps   = d.position_scatter;
+  const lev  = d.leverage;
+
+  const typeLabel = d.fund_type === 'interval_fund' ? 'Interval Fund' : 'BDC';
+  const edgarUrl  = `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${d.cik}&type=&dateb=&owner=include&count=10`;
+  const cachedBadge = d.cached ? '<span class="cached-badge no-print">📦 cached</span>' : '';
+  window._lastTicker = d.ticker || '';
+
+  // stress color class
+  const stressCls = sum.stress_pct > 5 ? 'danger' : sum.stress_pct > 2 ? 'warn' : '';
+  // equity-relative thresholds ~2x the asset ones (BDC leverage runs near 1x)
+  const eqPct = sum.stress_vs_equity_pct;
+  const equityCls = (eqPct === null || eqPct === undefined) ? ''
+    : eqPct > 10 ? 'danger' : eqPct > 4 ? 'warn' : '';
+
+  el.innerHTML = `
+  <!-- Print-only report header -->
+  <div class="print-header">
+    <div class="print-logo">Credit<span>Pulse</span></div>
+    <div>BDC &amp; Interval Fund Analyzer · SEC EDGAR data</div>
+  </div>
+  <div class="print-footer"><span id="printGeneratedAt">${formatPrintTimestamp()}</span></div>
+
+  <!-- Fund header -->
+  <div class="fund-header">
+    <div class="fund-name">${d.fund_name}</div>
+    <span class="fund-tag">${typeLabel}</span>
+    ${cachedBadge}
+    <button class="pdf-btn no-print" onclick="downloadPDF()">⬇ Download PDF</button>
+  </div>
+  <div class="fund-meta">
+    CIK <a href="${edgarUrl}" target="_blank">${d.cik}</a> · ${qtrs[0]}–${qtrs[qtrs.length-1]} · ${qtrs.length} quarters
+    ${d.cached ? '' : ` · <a class="no-print" href="javascript:doAnalyze(true)">↻ refresh</a>`}
+  </div>
+
+  <!-- Summary stats -->
+  <div class="stats">
+    <div class="stat-card">
+      <div class="stat-label">Total FV (latest)</div>
+      <div class="stat-value">$${sum.total_fv_b.toFixed(1)}B</div>
+      <div class="stat-sub">${sum.n_positions.toLocaleString()} positions · ${qtrs[qtrs.length-1]}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Stressed FV (mark &lt; 90)</div>
+      <div class="stat-value ${stressCls}">$${sum.stressed_fv_m.toLocaleString()}M</div>
+      <div class="stat-sub">${sum.stress_pct}% of portfolio assets</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Stressed FV / Equity</div>
+      <div class="stat-value ${equityCls}">${sum.stress_vs_equity_pct !== null && sum.stress_vs_equity_pct !== undefined ? sum.stress_vs_equity_pct + '%' : 'N/A'}</div>
+      <div class="stat-sub">${sum.net_assets ? 'of net assets (' + formatCompactDollar(sum.net_assets) + ')' : 'net assets unavailable'}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Stressed positions</div>
+      <div class="stat-value ${stressCls}">${sp.length}</div>
+      <div class="stat-sub">borrowers with mark &lt; 90 (≥$100K FV)</div>
+    </div>
+  </div>
+
+  ${renderCreditScoreSection(cs)}
+
+  ${renderLeverageSection(lev)}
+
+  ${renderPositionScatterSection(ps)}
+
+  <!-- Bucket charts -->
+  <div class="bucket-toggle-row no-print">
+    <div class="mode-toggle">
+      <button class="mode-btn" id="modeBtnDollar" onclick="setBucketMode('$')">$M</button>
+      <button class="mode-btn active" id="modeBtnPct" onclick="setBucketMode('%')">%</button>
+    </div>
+  </div>
+  <div class="charts-grid">
+    <div class="chart-panel">
+      <div class="chart-title" id="stressChartTitle">Stress zone · mark 0–90 (% of portfolio)</div>
+      <div class="bucket-chart-wrap"><canvas id="stressChart"></canvas></div>
+    </div>
+    <div class="chart-panel">
+      <div class="chart-title" id="nearparChartTitle">Near par · mark 90–100+ (% of portfolio)</div>
+      <div class="bucket-chart-wrap"><canvas id="nearparChart"></canvas></div>
+    </div>
+  </div>
+
+  ${renderRealizedLossSection(rl)}
+
+  <!-- Roll-rate matrix -->
+  <div class="section">
+    <div class="section-title">Roll-Rate Transition Matrix</div>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:14px;">
+      FV-weighted average mark per borrower. Row = starting bucket; column = ending bucket.
+      <strong>Blue</strong> = stayed, <strong>Red</strong> = deteriorated, <strong>Green</strong> = cured, <strong>Yellow</strong> = exited. Values in $M.
+    </p>
+    <div class="period-tabs" id="periodTabs"></div>
+    <div class="matrix-wrap" id="matrixWrap"></div>
+    <div class="rate-bar-row" id="rateBar"></div>
+  </div>
+
+  <!-- Stressed positions table -->
+  ${sp.length === 0 ? '<div class="section"><div class="section-title">Stressed Positions</div><p style="font-size:13px;color:var(--muted)">No positions with mark &lt; 90 and FV ≥ $100K in the latest quarter.</p></div>'
+    : renderStressTable(sp, qtrs)}
+  `;
+
+  el.style.display = 'block';
+
+  // Draw bucket charts (percentage view is the default for each new analysis;
+  // the re-rendered toggle markup above already has "%" active)
+  bucketMode = '%';
+  renderBucketCharts(b, qtrs);
+  renderCreditScoreChart(cs);
+  renderLeverageChart(lev);
+  renderPositionScatterChart(ps);
+  renderRealizedLossChart(rl);
+
+  // Render roll-rate
+  if (rr.period_labels.length > 0) {
+    renderRollRate(rr);
+  }
+}
+
+function scoreClass(category) {
+  return `score-${String(category || '').toLowerCase().replace(/\s+/g, '-')}`;
+}
+
+function formatScoreChange(v) {
+  if (v === null || v === undefined || Number.isNaN(Number(v))) return 'N/A';
+  return `${v >= 0 ? '+' : ''}${v}`;
+}
+
+function componentLabel(k) {
+  return ({
+    delinquency: 'Mark Buckets',
+    rollRates: 'Roll Rates',
+    lossesAndRecoveries: 'Losses & Unrealized',
+    portfolioQuality: 'Portfolio Quality',
+    momentum: 'Momentum',
+  })[k] || k;
+}
+
+function renderDrivers(title, drivers, emptyText) {
+  const items = (drivers || []).map(d => `<li>${d.explanation}</li>`).join('');
+  return `<div class="driver-box">
+    <div class="driver-title">${title}</div>
+    ${items ? `<ul>${items}</ul>` : `<div style="font-size:12px;color:var(--muted)">${emptyText}</div>`}
+  </div>`;
+}
+
+function renderCreditScoreSection(score) {
+  if (!score || score.overallScore === null || score.overallScore === undefined) {
+    return `<div class="section score-section">
+      <div class="section-title">CreditPulse Score</div>
+      <p class="score-summary">CreditPulse Score is unavailable because the parsed filing data does not provide enough inputs for a reliable score.</p>
+    </div>`;
+  }
+
+  const cls = scoreClass(score.category);
+  const comps = score.componentScores || {};
+  const weights = score.componentWeights || {};
+  const compRows = Object.keys(weights).map(k => `
+    <tr>
+      <td>${componentLabel(k)}</td>
+      <td>${weights[k]}%</td>
+      <td>${comps[k] === null || comps[k] === undefined ? 'N/A' : comps[k]}</td>
+    </tr>
+  `).join('');
+
+  return `<div class="section score-section">
+    <div class="section-title">CreditPulse Score</div>
+    <div class="score-layout">
+      <div class="score-hero">
+        <div class="score-label">Current score</div>
+        <div class="score-number ${cls}">${score.overallScore}</div>
+        <div class="score-category ${cls}">${score.category}</div>
+        <div class="score-meta">
+          <span class="score-pill">Prior ${score.priorPeriodScore ?? 'N/A'}</span>
+          <span class="score-pill">Change ${formatScoreChange(score.scoreChange)}</span>
+          <span class="score-pill">${score.confidence} confidence</span>
+          <span class="score-pill">${score.dataCoveragePct}% coverage</span>
+        </div>
+      </div>
+      <div>
+        <p class="score-summary">${score.summary || ''}</p>
+        <canvas id="scoreTrendChart" height="90"></canvas>
+        <div class="score-drivers">
+          ${renderDrivers('Positive Drivers', score.positiveDrivers, 'No material positive drivers identified.')}
+          ${renderDrivers('Negative Drivers', score.negativeDrivers, 'No material negative drivers identified.')}
+        </div>
+      </div>
+    </div>
+    <div class="score-method">
+      <details open>
+        <summary>How the score is calculated</summary>
+        <p style="margin-top:8px">${score.methodology || ''}</p>
+        <table class="component-table">
+          <thead><tr><th>Component</th><th>Weight</th><th>Score</th></tr></thead>
+          <tbody>${compRows}</tbody>
+        </table>
+      </details>
+    </div>
+  </div>`;
+}
+
+function renderCreditScoreChart(score) {
+  if (scoreChartInst) { scoreChartInst.destroy(); scoreChartInst = null; }
+  const canvas = document.getElementById('scoreTrendChart');
+  const points = score && Array.isArray(score.historicalScores) ? score.historicalScores : [];
+  if (!canvas || !points.some(p => p.score !== null && p.score !== undefined)) return;
+
+  scoreChartInst = new Chart(canvas, {
+    type: 'line',
+    data: {
+      labels: points.map(p => p.quarter),
+      datasets: [{
+        label: 'CreditPulse Score',
+        data: points.map(p => p.score),
+        borderColor: '#1a56db',
+        backgroundColor: 'rgba(26,86,219,0.08)',
+        fill: true,
+        tension: 0.25,
+        pointRadius: 3,
+        pointBackgroundColor: '#1a56db',
+      }],
+    },
+    options: {
+      responsive: true,
+      animation: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: ctx => ` Score: ${ctx.parsed.y}` } },
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { font: { size: 11 }}},
+        y: {
+          min: 0,
+          max: 100,
+          grid: { color: '#eee' },
+          ticks: { stepSize: 20, font: { size: 11 }},
+        },
+      },
+    },
+  });
+}
+
+const LEV_ALERT_STYLE = {
+  red:   'background:#fdecec;color:#b42318;border:1px solid #f4b9b3;',
+  amber: 'background:#fff7e6;color:#92400e;border:1px solid #f5d08c;',
+  info:  'background:#eef4ff;color:#1e429f;border:1px solid #c3d4f7;',
+};
+
+function renderLeverageSection(lev) {
+  if (!lev || !lev.latest) {
+    return `<div class="section">
+      <div class="section-title">Leverage &amp; Asset Coverage</div>
+      <p style="font-size:13px;color:var(--muted)">${lev && lev.insight ? lev.insight :
+        'Leverage data was not available in the parsed filings.'}</p>
+    </div>`;
+  }
+
+  const L = lev.latest, req = lev.requirement || {};
+  const covCls = lev.status === 'red' ? 'danger' : lev.status === 'amber' ? 'warn' : '';
+  const alerts = (lev.alerts || []).map(a =>
+    `<div style="display:block;padding:8px 12px;border-radius:8px;font-size:12.5px;
+       margin-bottom:6px;${LEV_ALERT_STYLE[a.level] || LEV_ALERT_STYLE.info}">
+       <strong style="text-transform:uppercase;font-size:10.5px;letter-spacing:.4px;">${a.level}</strong>
+       &nbsp;${a.message}</div>`).join('');
+
+  const rows = (lev.items || []).map(i => `
+    <tr>
+      <td>${i.quarter || ''}</td>
+      <td>${i.debt ? formatCompactDollar(i.debt) : 'N/A'}${i.debtIsProxy ? ' *' : ''}</td>
+      <td>${i.equity ? formatCompactDollar(i.equity) : 'N/A'}</td>
+      <td>${i.deRatio !== null && i.deRatio !== undefined ? i.deRatio + 'x' : 'N/A'}</td>
+      <td>${i.coveragePct !== null && i.coveragePct !== undefined ? i.coveragePct + '%' : 'N/A'}</td>
+      <td>${i.cushionPct !== null && i.cushionPct !== undefined ? i.cushionPct + '%' : 'N/A'}</td>
+    </tr>`).join('');
+
+  return `<div class="section">
+    <div class="section-title">Leverage &amp; Asset Coverage</div>
+    <div class="stats">
+      <div class="stat-card">
+        <div class="stat-label">Asset coverage</div>
+        <div class="stat-value ${covCls}">${L.coveragePct}%</div>
+        <div class="stat-sub">regulatory minimum ${req.limit_pct ? req.limit_pct.toFixed(0) : ''}% · ${L.quarter}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Debt / equity</div>
+        <div class="stat-value ${covCls}">${L.deRatio}x</div>
+        <div class="stat-sub">${formatCompactDollar(L.debt)} debt · ${formatCompactDollar(L.equity)} net assets</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">NAV cushion to test</div>
+        <div class="stat-value ${covCls}">${L.cushionPct}%</div>
+        <div class="stat-sub">NAV decline that exhausts coverage, debt held constant</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Debt headroom</div>
+        <div class="stat-value">${formatCompactDollar(L.headroomDebt)}</div>
+        <div class="stat-sub">additional borrowing capacity at current equity</div>
+      </div>
+    </div>
+    ${alerts ? `<div style="margin:4px 0 12px">${alerts}</div>` : ''}
+    <p class="score-summary" style="margin-bottom:10px">${lev.insight || ''}</p>
+    <canvas id="leverageChart" height="90"></canvas>
+    <div class="score-method">
+      <details>
+        <summary>Quarterly detail &amp; methodology</summary>
+        <p style="margin-top:8px">${lev.definition || ''}</p>
+        <table class="component-table">
+          <thead><tr><th>Quarter</th><th>Debt</th><th>Net assets</th><th>D/E</th><th>Coverage</th><th>NAV cushion</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+        ${(lev.items || []).some(i => i.debtIsProxy)
+          ? '<p style="margin-top:6px;font-size:11.5px;color:var(--muted)">* borrowings proxied by total liabilities (NPORT borrowing fields not tagged).</p>' : ''}
+      </details>
+    </div>
+  </div>`;
+}
+
+function renderLeverageChart(lev) {
+  if (leverageChartInst) { leverageChartInst.destroy(); leverageChartInst = null; }
+  const canvas = document.getElementById('leverageChart');
+  const items = lev && Array.isArray(lev.items) ? lev.items.filter(i => i.dataAvailable) : [];
+  if (!canvas || items.length < 2) { if (canvas) canvas.style.display = 'none'; return; }
+
+  const req = lev.requirement || {};
+  const labels = items.map(i => i.quarter);
+  // Coverage = numerator / denominator. Numerator: total assets where the
+  // filing tags them (NPORT), otherwise equity + debt (the 1940 Act
+  // senior-securities approximation). Denominator: debt. Bars make the
+  // redemption dynamic visible: equity outflows shrink the numerator while
+  // debt holds or rises, compressing the coverage line.
+  const numer = items.map(i => (i.assets ?? ((i.equity || 0) + (i.debt || 0))));
+  const denom = items.map(i => i.debt);
+
+  leverageChartInst = new Chart(canvas, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        {
+          type: 'line',
+          label: 'Asset coverage %',
+          data: items.map(i => i.coveragePct),
+          borderColor: '#1a56db',
+          backgroundColor: 'rgba(26,86,219,0.08)',
+          fill: false, tension: 0.25, pointRadius: 3, pointBackgroundColor: '#1a56db',
+          yAxisID: 'pct', order: 0,
+        },
+        {
+          type: 'line',
+          label: `Watch (${req.amber_pct || ''}%)`,
+          data: labels.map(() => req.amber_pct),
+          borderColor: '#d97706', borderDash: [6, 4], pointRadius: 0, fill: false,
+          yAxisID: 'pct', order: 0,
+        },
+        {
+          type: 'line',
+          label: `Regulatory minimum (${req.limit_pct || ''}%)`,
+          data: labels.map(() => req.limit_pct),
+          borderColor: '#b42318', borderDash: [6, 4], pointRadius: 0, fill: false,
+          yAxisID: 'pct', order: 0,
+        },
+        {
+          type: 'bar',
+          label: 'Assets (numerator)',
+          data: numer,
+          backgroundColor: 'rgba(26,86,219,0.30)',
+          borderColor: 'rgba(26,86,219,0.55)', borderWidth: 1,
+          yAxisID: 'usd', order: 2,
+        },
+        {
+          type: 'bar',
+          label: 'Debt (denominator)',
+          data: denom,
+          backgroundColor: 'rgba(180,35,24,0.30)',
+          borderColor: 'rgba(180,35,24,0.55)', borderWidth: 1,
+          yAxisID: 'usd', order: 2,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      animation: false,
+      plugins: {
+        legend: { display: true, labels: { boxWidth: 18, font: { size: 11 } } },
+        tooltip: { callbacks: { label: ctx =>
+          ctx.dataset.yAxisID === 'usd'
+            ? ` ${ctx.dataset.label}: ${formatCompactDollar(ctx.parsed.y)}`
+            : ` ${ctx.dataset.label}: ${ctx.parsed.y}%` } },
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { font: { size: 11 } } },
+        pct: {
+          position: 'left',
+          // Keep the coverage line readable: zoom the % axis to the band
+          // between the regulatory minimum and the observed series instead of
+          // starting at zero (the bars carry the zero-based $ scale).
+          min: Math.max(0, Math.floor((Math.min(req.limit_pct || 0,
+                 ...items.map(i => i.coveragePct)) - 15) / 10) * 10),
+          max: Math.ceil((Math.max(req.amber_pct || 0,
+                 ...items.map(i => i.coveragePct)) + 15) / 10) * 10,
+          grid: { color: '#eee' },
+          ticks: { font: { size: 11 }, callback: v => v + '%' },
+          title: { display: true, text: 'Coverage %', font: { size: 11 } },
+        },
+        usd: {
+          position: 'right',
+          beginAtZero: true,
+          grid: { drawOnChartArea: false },
+          ticks: { font: { size: 11 }, callback: v => formatCompactDollar(v) },
+          title: { display: true, text: 'Assets / Debt', font: { size: 11 } },
+        },
+      },
+    },
+  });
+}
+
+function renderPositionScatterSection(scatter) {
+  const items = scatter && Array.isArray(scatter.items) ? scatter.items : [];
+  if (!items.length) {
+    return `<div class="section">
+      <div class="section-title">Largest Positions: FV vs Price</div>
+      <p class="position-note">Position-level fair value and price data was not available in the parsed latest filing.</p>
+    </div>`;
+  }
+
+  return `<div class="section">
+    <div class="position-scatter-head">
+      <div class="section-title" style="margin-bottom:0">Largest Positions: FV vs Price</div>
+      <div class="position-scatter-meta">Top ${items.length} positions · ${scatter.quarter || 'latest quarter'}</div>
+    </div>
+    <div class="position-legend">
+      <span><span class="legend-dot" style="background:#284f9e"></span>90+</span>
+      <span><span class="legend-dot" style="background:#d9a321"></span>80-90</span>
+      <span><span class="legend-dot" style="background:#d46b2d"></span>70-80</span>
+      <span><span class="legend-dot" style="background:#ce3430"></span>&lt;70</span>
+      <span>Bubble size = relative FV</span>
+    </div>
+    <div class="position-chart-wrap">
+      <canvas id="positionScatterChart"></canvas>
+    </div>
+    <p class="position-note">${scatter.definition || ''}</p>
+  </div>`;
+}
+
+function renderPositionScatterChart(scatter) {
+  if (positionScatterChartInst) { positionScatterChartInst.destroy(); positionScatterChartInst = null; }
+  const canvas = document.getElementById('positionScatterChart');
+  const items = scatter && Array.isArray(scatter.items) ? scatter.items : [];
+  if (!canvas || !items.length) return;
+
+  const maxFvM = Math.max(...items.map(item => Number(item.fv_m || 0)));
+  const bubbleRadius = fvM => {
+    const n = Number(fvM || 0);
+    if (!Number.isFinite(n) || n <= 0 || maxFvM <= 0) return 6;
+    const relative = n / maxFvM;
+    return 4 + Math.pow(relative, 2.2) * 34;
+  };
+  const bandColor = price => price < 70 ? '#ce3430'
+    : price < 80 ? '#d46b2d'
+    : price < 90 ? '#d9a321'
+    : '#284f9e';
+
+  const points = items.map(item => ({
+    x: Number(item.fv_m || 0),
+    y: Number(item.price || 0),
+    r: bubbleRadius(item.fv_m),
+    name: item.name || 'Unknown',
+    type: item.type || 'Investment',
+    currency: item.currency || 'USD',
+    portfolioPct: item.portfolio_pct,
+  }));
+
+  const priceBandPlugin = {
+    id: 'priceBandPlugin',
+    beforeDraw(chart) {
+      const { ctx, chartArea, scales } = chart;
+      if (!chartArea || !scales.y) return;
+      const bands = [
+        { lo: scales.y.min, hi: 70, color: 'rgba(206,52,48,0.08)' },
+        { lo: 70, hi: 80, color: 'rgba(212,107,45,0.08)' },
+        { lo: 80, hi: 90, color: 'rgba(217,163,33,0.08)' },
+        { lo: 90, hi: scales.y.max, color: 'rgba(40,79,158,0.05)' },
+      ];
+      ctx.save();
+      bands.forEach(b => {
+        const top = scales.y.getPixelForValue(Math.min(b.hi, scales.y.max));
+        const bottom = scales.y.getPixelForValue(Math.max(b.lo, scales.y.min));
+        ctx.fillStyle = b.color;
+        ctx.fillRect(chartArea.left, top, chartArea.right - chartArea.left, bottom - top);
+      });
+      [70, 80, 90].forEach(v => {
+        if (v < scales.y.min || v > scales.y.max) return;
+        const y = scales.y.getPixelForValue(v);
+        ctx.strokeStyle = v === 90 ? 'rgba(206,52,48,0.45)' : 'rgba(80,80,80,0.22)';
+        ctx.lineWidth = v === 90 ? 1.4 : 1;
+        ctx.setLineDash(v === 90 ? [4, 4] : [3, 4]);
+        ctx.beginPath();
+        ctx.moveTo(chartArea.left, y);
+        ctx.lineTo(chartArea.right, y);
+        ctx.stroke();
+      });
+      ctx.restore();
+    },
+  };
+
+  positionScatterChartInst = new Chart(canvas, {
+    type: 'bubble',
+    data: {
+      datasets: [{
+        label: 'Position',
+        data: points,
+        backgroundColor: points.map(p => bandColor(p.y) + 'dd'),
+        hoverBackgroundColor: points.map(p => bandColor(p.y)),
+        pointBorderColor: '#fff',
+        pointBorderWidth: 1,
+      }],
+    },
+    plugins: [priceBandPlugin],
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: ctx => ctx[0]?.raw?.name || 'Position',
+            label: ctx => {
+              const p = ctx.raw;
+              return [
+                `FV: $${p.x.toFixed(1)}M`,
+                `Price / mark: $${p.y.toFixed(2)}`,
+                `Portfolio share: ${p.portfolioPct ?? 'N/A'}%`,
+                `${p.type} · ${p.currency}`,
+              ];
+            },
+          },
+        },
+      },
+      scales: {
+        x: {
+          title: { display: true, text: 'Fair value ($M)', font: { size: 12 }},
+          grid: { color: '#eee' },
+          ticks: { font: { size: 11 }, callback: v => '$' + Number(v).toFixed(0) + 'M' },
+        },
+        y: {
+          title: { display: true, text: 'Price / mark ($ per $100 par)', font: { size: 12 }},
+          grid: { color: '#eee' },
+          ticks: { font: { size: 11 }, callback: v => '$' + Number(v).toFixed(0) },
+          suggestedMin: Math.max(0, Math.min(...points.map(p => p.y)) - 5),
+          suggestedMax: Math.max(...points.map(p => p.y)) + 5,
+        },
+      },
+    },
+  });
+}
+
+function formatCompactDollar(v) {
+  if (v === null || v === undefined || Number.isNaN(Number(v))) return 'N/A';
+  const abs = Math.abs(Number(v));
+  const sign = Number(v) < 0 ? '-' : '';
+  if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(1)}B`;
+  if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(1)}M`;
+  if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(1)}K`;
+  return `${sign}$${abs.toFixed(0)}`;
+}
+
+function realizedMetricLabel(type) {
+  return type === 'gross_realized_loss' ? 'Gross realized losses'
+    : type === 'net_realized_loss' ? 'Net realized losses'
+    : 'Unavailable';
+}
+
+function renderRealizedLossSection(rl) {
+  const rows = rl && Array.isArray(rl.items) ? rl.items : [];
+  const hasData = rows.some(r => r.dataAvailable || r.unrealizedAvailable);
+  const title = (rl && rl.title) || 'Realized & Unrealized Gains (Losses)';
+
+  if (!hasData) {
+    return `<div class="section realized-section">
+      <div class="section-title">${title}</div>
+      <p class="realized-insight">${rl && rl.insight ? rl.insight : 'Realized gain/loss data was not available in the parsed SEC filings for these quarters.'}</p>
+      <p class="source-note">${rl && rl.definition ? rl.definition : ''}</p>
+    </div>`;
+  }
+
+  const gs = rl.gains_summary || {};
+  const signCls = v => (v === null || v === undefined) ? '' : (v < 0 ? 'danger' : 'ok');
+  const tile = (label, value, sub, cls) => `
+    <div class="stat-card">
+      <div class="stat-label">${label}</div>
+      <div class="stat-value ${cls || ''}">${value}</div>
+      <div class="stat-sub">${sub || ''}</div>
+    </div>`;
+  const latestQ = gs.latest_quarter || 'Latest Q';
+
+  const tiles = [
+    tile(`Cumulative realized (${gs.quarters_covered || 0}Q)`,
+         formatCompactDollar(gs.cum_realized), 'net realized gains (losses)', signCls(gs.cum_realized)),
+    tile('As % of avg portfolio',
+         (gs.cum_realized_pct !== null && gs.cum_realized_pct !== undefined) ? gs.cum_realized_pct + '%' : 'N/A',
+         `avg portfolio ${formatCompactDollar(gs.avg_portfolio)}`, signCls(gs.cum_realized_pct)),
+    tile(`${latestQ} realized`, formatCompactDollar(gs.latest_realized),
+         'net realized', signCls(gs.latest_realized)),
+    tile(`${latestQ} unrealized`, formatCompactDollar(gs.latest_unrealized),
+         'net change in unrealized', signCls(gs.latest_unrealized)),
+  ].join('');
+
+  const tableRows = rows.map(r => `
+    <tr>
+      <td>${r.quarter || 'N/A'}</td>
+      <td>${r.dataAvailable ? formatCompactDollar(r.originalValue) : 'N/A'}</td>
+      <td>${r.unrealizedAvailable ? formatCompactDollar(r.unrealizedChange) : 'N/A'}</td>
+      <td>${r.source || 'N/A'}${r.periodEnd ? ' · ' + r.periodEnd : ''}</td>
+    </tr>
+  `).join('');
+
+  return `<div class="section realized-section">
+    <div class="section-title">${title}</div>
+    <div class="gains-tiles">${tiles}</div>
+    <div class="realized-loss-chart-wrap">
+      <canvas id="realizedLossChart"></canvas>
+    </div>
+    <div class="chart-title" style="margin:16px 0 6px">Cumulative realized gains (losses)</div>
+    <div class="cum-realized-chart-wrap">
+      <canvas id="cumRealizedChart"></canvas>
+    </div>
+    <p class="realized-insight" style="margin-top:14px">${rl.insight || ''}</p>
+    <table class="realized">
+      <thead><tr><th>Quarter</th><th>Realized</th><th>Unrealized Δ</th><th>Source</th></tr></thead>
+      <tbody>${tableRows}</tbody>
+    </table>
+    <p class="source-note">${rl.definition || ''}</p>
+  </div>`;
+}
+
+const GAIN_COLORS = {
+  realizedLoss: 'rgba(206,52,48,0.9)',
+  realizedGain: 'rgba(8,80,65,0.85)',
+  unrealDepr:   'rgba(240,155,150,0.9)',
+  unrealAppr:   'rgba(120,205,165,0.9)',
+};
+
+function renderRealizedLossChart(rl) {
+  if (realizedLossChartInst) { realizedLossChartInst.destroy(); realizedLossChartInst = null; }
+  if (cumRealizedChartInst)  { cumRealizedChartInst.destroy();  cumRealizedChartInst = null; }
+  const rows = rl && Array.isArray(rl.items) ? rl.items : [];
+  const canvas = document.getElementById('realizedLossChart');
+  if (!canvas || !rows.some(r => r.dataAvailable || r.unrealizedAvailable)) return;
+
+  const labels = rows.map(r => r.quarter || '');
+  const realized = rows.map(r => r.dataAvailable ? r.originalValue : null);
+  const unreal = rows.map(r => r.unrealizedAvailable ? r.unrealizedChange : null);
+
+  realizedLossChartInst = new Chart(canvas, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Realized gains (losses)',
+          backgroundColor: realized.map(v => (v ?? 0) < 0 ? GAIN_COLORS.realizedLoss : GAIN_COLORS.realizedGain),
+          data: realized,
+        },
+        {
+          label: 'Unrealized change (net)',
+          backgroundColor: unreal.map(v => (v ?? 0) < 0 ? GAIN_COLORS.unrealDepr : GAIN_COLORS.unrealAppr),
+          data: unreal,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      plugins: {
+        legend: {
+          position: 'bottom',
+          labels: {
+            font: { size: 12 }, boxWidth: 12,
+            generateLabels: () => ([
+              { text: 'Realized losses', fillStyle: GAIN_COLORS.realizedLoss, strokeStyle: GAIN_COLORS.realizedLoss },
+              { text: 'Realized gains', fillStyle: GAIN_COLORS.realizedGain, strokeStyle: GAIN_COLORS.realizedGain },
+              { text: 'Unrealized depreciation', fillStyle: GAIN_COLORS.unrealDepr, strokeStyle: GAIN_COLORS.unrealDepr },
+              { text: 'Unrealized appreciation', fillStyle: GAIN_COLORS.unrealAppr, strokeStyle: GAIN_COLORS.unrealAppr },
+            ]),
+          },
+        },
+        tooltip: { callbacks: { label: ctx => ` ${ctx.dataset.label}: ${formatCompactDollar(ctx.parsed.y)}` } },
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { font: { size: 13 }}},
+        y: { grid: { color: '#eee' }, ticks: { font: { size: 13 }, callback: v => formatCompactDollar(v) }},
+      },
+    },
+  });
+
+  const cumCanvas = document.getElementById('cumRealizedChart');
+  if (cumCanvas && rows.some(r => r.dataAvailable)) {
+    let acc = 0;
+    const cum = rows.map(r => { if (r.dataAvailable) acc += (r.originalValue || 0); return acc; });
+    cumRealizedChartInst = new Chart(cumCanvas, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Cumulative realized',
+          data: cum,
+          borderColor: 'rgba(200,30,30,0.9)',
+          backgroundColor: 'rgba(200,30,30,0.07)',
+          fill: true,
+          tension: 0.2,
+          pointRadius: 3,
+          pointBackgroundColor: 'rgba(200,30,30,0.9)',
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: ctx => ` ${formatCompactDollar(ctx.parsed.y)}` } },
+        },
+        scales: {
+          x: { grid: { display: false }, ticks: { font: { size: 13 }}},
+          y: { grid: { color: '#eee' }, ticks: { font: { size: 13 }, callback: v => formatCompactDollar(v) }},
+        },
+      },
+    });
+  }
+}
+
+// ── BUCKET CHARTS ────────────────────────────────────────────────────────────
+const CHART_COLORS = [
+  'rgba(180,210,240,0.85)',
+  'rgba(130,175,215,0.85)',
+  'rgba(80,140,190,0.85)',
+  'rgba(40,100,160,0.85)',
+  'rgba(15,60,120,0.85)',
+  'rgba(200,155,40,0.92)',
+];
+
+// '$' = raw $M fair value; '%' = each bucket as a share of that quarter's
+// total portfolio FV. Resets to '%' on every new analysis.
+let bucketMode = '%';
+
+function setBucketMode(mode) {
+  bucketMode = mode;
+  const btnD = document.getElementById('modeBtnDollar');
+  const btnP = document.getElementById('modeBtnPct');
+  if (btnD) btnD.classList.toggle('active', mode === '$');
+  if (btnP) btnP.classList.toggle('active', mode === '%');
+
+  const suffix = mode === '%' ? '(% of portfolio)' : '($M fair value)';
+  const st = document.getElementById('stressChartTitle');
+  const nt = document.getElementById('nearparChartTitle');
+  if (st) st.textContent = `Stress zone · mark 0–90 ${suffix}`;
+  if (nt) nt.textContent = `Near par · mark 90–100+ ${suffix}`;
+
+  if (window._bucketData) {
+    renderBucketCharts(window._bucketData.b, window._bucketData.qtrs);
+  }
+}
+
+function renderBucketCharts(b, qtrs) {
+  window._bucketData = { b, qtrs };
+  const stressBuckets  = ['< 50', '50–60', '60–70', '70–80', '80–90'];
+  const nearparBuckets = ['90–100', '100+'];
+
+  // destroy old
+  if (stressChartInst)  { stressChartInst.destroy(); }
+  if (nearparChartInst) { nearparChartInst.destroy(); }
+
+  // Per-quarter total FV across ALL buckets (incl. "< 50") — the denominator
+  // for percentage mode
+  const allBuckets = b.names || Object.keys(b.data);
+  const qtrTotals = qtrs.map((q, qi) =>
+    allBuckets.reduce((s, n) => s + ((b.data[n] || [])[qi] || 0), 0));
+
+  const pctMode = bucketMode === '%';
+  const fmtTick = v => pctMode ? v + '%' : '$' + v + 'M';
+  const fmtTip  = v => pctMode ? v.toFixed(1) + '%' : '$' + v.toFixed(0) + 'M';
+
+  const opts = {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: false,
+    plugins: {
+      legend: {
+        position: 'bottom',
+        labels: { font: { size: 9 }, boxWidth: 8, boxHeight: 8, padding: 6 },
+      },
+      tooltip: { callbacks: { label: ctx => ` ${ctx.dataset.label}: ${fmtTip(ctx.parsed.y)}` }},
+    },
+    scales: {
+      x: { grid: { display: false }, ticks: { font: { size: 11 }}},
+      y: { grid: { color: '#eee' }, ticks: { font: { size: 11 }, callback: fmtTick }},
+    },
+  };
+
+  function buildDatasets(buckets) {
+    return qtrs.map((q, qi) => ({
+      label: q,
+      backgroundColor: CHART_COLORS[qi % CHART_COLORS.length],
+      data: buckets.map(bname => {
+        const raw = b.data[bname] ? (b.data[bname][qi] || 0) : 0;
+        if (!pctMode) return raw;
+        return qtrTotals[qi] > 0 ? raw / qtrTotals[qi] * 100 : 0;
+      }),
+    }));
+  }
+
+  stressChartInst = new Chart(document.getElementById('stressChart'), {
+    type: 'bar',
+    data: { labels: stressBuckets, datasets: buildDatasets(stressBuckets) },
+    options: opts,
+  });
+
+  nearparChartInst = new Chart(document.getElementById('nearparChart'), {
+    type: 'bar',
+    data: { labels: nearparBuckets, datasets: buildDatasets(nearparBuckets) },
+    options: opts,
+  });
+}
+
+// ── ROLL-RATE ────────────────────────────────────────────────────────────────
+function renderRollRate(rr) {
+  const tabs = document.getElementById('periodTabs');
+  const wrap = document.getElementById('matrixWrap');
+  const bar  = document.getElementById('rateBar');
+  const N    = rr.bucket_names.length;
+
+  tabs.innerHTML = rr.period_labels.map((label, i) =>
+    `<div class="period-tab${i===rr.period_labels.length-1?' active':''}" onclick="showMatrix(${i})" id="ptab_${i}">${label}</div>`
+  ).join('');
+
+  window._rrData = rr;
+
+  showMatrix(rr.period_labels.length - 1);
+}
+
+function showMatrix(idx) {
+  const rr   = window._rrData;
+  const N    = rr.bucket_names.length;
+  const pm   = rr.period_matrices[idx];
+  const mat  = pm.matrix;
+  const ar   = rr.avg_rates;
+
+  // Update tab highlights
+  document.querySelectorAll('.period-tab').forEach((el, i) => {
+    el.classList.toggle('active', i === idx);
+  });
+
+  // Header row
+  const colHeaders = [...rr.bucket_names, 'Exit'];
+  const rowHeaders = [...rr.bucket_names, 'Entry'];
+
+  let html = '<table class="matrix">';
+  html += '<thead><tr><th style="text-align:left">From \\ To</th>';
+  colHeaders.forEach((h, ci) => {
+    const cls = ci === N ? 'exit-col' : '';
+    html += `<th class="${cls}">${h}</th>`;
+  });
+  html += '</tr></thead><tbody>';
+
+  mat.forEach((row, ri) => {
+    const rowIsEntry = ri === N;
+    html += `<tr>`;
+    html += `<td class="row-label ${rowIsEntry ? 'entry-row' : ''}">${rowHeaders[ri]}</td>`;
+    row.forEach((val, ci) => {
+      const colIsExit  = ci === N;
+      const isDiag     = ri === ci && !rowIsEntry && !colIsExit;
+      const isWorsen   = !rowIsEntry && !colIsExit && ci < ri;
+      const isImprove  = !rowIsEntry && !colIsExit && ci > ri;
+      const isEntry    = rowIsEntry;
+      const isExit     = colIsExit && !rowIsEntry;
+      const isZero     = val === 0;
+
+      let cls = '';
+      if (isDiag)   cls = 'diagonal';
+      else if (isWorsen)  cls = 'worsen';
+      else if (isImprove) cls = 'improve';
+      else if (isExit)    cls = 'exit-col';
+      else if (isEntry)   cls = 'entry-row';
+      if (isZero) cls += ' zero';
+
+      html += `<td class="${cls}">${val === 0 ? '—' : '$'+val.toFixed(1)+'M'}</td>`;
+    });
+    html += '</tr>';
+  });
+  html += '</tbody></table>';
+
+  document.getElementById('matrixWrap').innerHTML = html;
+
+  // Rate summary bar
+  const fwd  = ar.forward_roll[idx];
+  const cure = ar.cure[idx];
+  const stay = ar.stay[idx];
+  const exit = ar.exit[idx];
+  const deterioration = cure > 0 ? `${(fwd / cure).toFixed(1)}x` : 'N/A';
+
+  document.getElementById('rateBar').innerHTML = `
+    <div class="rate-item">
+      <div class="rate-label">Forward Roll Rate</div>
+      <div class="rate-val danger">${fwd}%</div>
+      <div style="font-size:11px;color:var(--muted)">moved to worse bucket</div>
+    </div>
+    <div class="rate-item">
+      <div class="rate-label">Cure Rate</div>
+      <div class="rate-val ok">${cure}%</div>
+      <div style="font-size:11px;color:var(--muted)">moved to better bucket</div>
+    </div>
+    <div class="rate-item">
+      <div class="rate-label">Deterioration Ratio</div>
+      <div class="rate-val danger">${deterioration}</div>
+      <div style="font-size:11px;color:var(--muted)">forward roll / cure</div>
+    </div>
+    <div class="rate-item">
+      <div class="rate-label">Stay Rate</div>
+      <div class="rate-val muted">${stay}%</div>
+      <div style="font-size:11px;color:var(--muted)">remained in same bucket</div>
+    </div>
+    <div class="rate-item">
+      <div class="rate-label">Exit Rate</div>
+      <div class="rate-val muted">${exit}%</div>
+      <div style="font-size:11px;color:var(--muted)">left portfolio</div>
+    </div>
+  `;
+}
+
+// ── STRESS TABLE ─────────────────────────────────────────────────────────────
+function renderStressTable(sp, qtrs) {
+  const sectionLabel = {
+    migrated: 'Newly Migrated',
+    stressed: 'Already Stressed',
+    new:      'New Position',
+  };
+
+  let html = `<div class="section stress-section">
+  <div class="section-title">Stressed Positions — Mark History</div>
+  <p style="font-size:12px;color:var(--muted);margin-bottom:14px;">
+    FV-weighted average mark per borrower · mark &lt; 90 in latest quarter · minimum $100K FV
+  </p>
+  <div style="overflow-x:auto">
+  <table class="stress">
+    <thead>
+      <tr>
+        <th style="text-align:left;min-width:220px">Company</th>
+        ${qtrs.map(q => `<th>${q}</th>`).join('')}
+        <th>Latest FV</th>
+        <th>Chg</th>
+      </tr>
+    </thead>
+    <tbody>`;
+
+  let lastSection = null;
+
+  sp.forEach(c => {
+    if (c.section !== lastSection) {
+      html += `<tr class="section-row"><td colspan="${qtrs.length + 3}" style="padding:10px 10px 4px;border-bottom:1px solid var(--border)">
+        <span class="section-badge ${c.section}">${sectionLabel[c.section] || c.section}</span>
+      </td></tr>`;
+      lastSection = c.section;
+    }
+
+    const fvStr = c.latest_fv_k >= 1000
+      ? `$${(c.latest_fv_k/1000).toFixed(1)}M`
+      : `$${c.latest_fv_k}K`;
+
+    const chgColor = c.chg > 0 ? 'color:var(--ok)' : c.chg < -20 ? 'color:var(--danger);font-weight:700' : 'color:var(--warn)';
+
+    const markCells = qtrs.map(q => {
+      const v = c.marks[q];
+      return `<td>${markChip(v)}</td>`;
+    }).join('');
+
+    html += `<tr>
+      <td title="${c.name}">${c.name.length > 40 ? c.name.slice(0,39)+'…' : c.name}</td>
+      ${markCells}
+      <td>${fvStr}</td>
+      <td style="${chgColor}">${c.chg > 0 ? '+' : ''}${c.chg.toFixed(1)}</td>
+    </tr>`;
+  });
+
+  html += `</tbody></table></div></div>`;
+  return html;
+}
+</script>
+</body>
+</html>

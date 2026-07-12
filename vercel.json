@@ -1,0 +1,86 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/analyze.py",
+      "use": "@vercel/python",
+      "config": { "maxLambdaSize": "15mb" }
+    },
+    {
+      "src": "index.html",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "favicon.ico",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "favicon.svg",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "favicon-16x16.png",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "favicon-32x32.png",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "favicon-48x48.png",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "favicon-96x96.png",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "android-chrome-192x192.png",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "android-chrome-512x512.png",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "apple-touch-icon.png",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "mstile-150x150.png",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "safari-pinned-tab.svg",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "browserconfig.xml",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "site.webmanifest",
+      "use": "@vercel/static"
+    }
+  ],
+  "routes": [
+    { "src": "/api/analyze", "dest": "/api/analyze.py" },
+    { "src": "/favicon.ico", "dest": "/favicon.ico" },
+    { "src": "/favicon.svg", "dest": "/favicon.svg" },
+    { "src": "/favicon-16x16.png", "dest": "/favicon-16x16.png" },
+    { "src": "/favicon-32x32.png", "dest": "/favicon-32x32.png" },
+    { "src": "/favicon-48x48.png", "dest": "/favicon-48x48.png" },
+    { "src": "/favicon-96x96.png", "dest": "/favicon-96x96.png" },
+    { "src": "/android-chrome-192x192.png", "dest": "/android-chrome-192x192.png" },
+    { "src": "/android-chrome-512x512.png", "dest": "/android-chrome-512x512.png" },
+    { "src": "/apple-touch-icon.png", "dest": "/apple-touch-icon.png" },
+    { "src": "/mstile-150x150.png", "dest": "/mstile-150x150.png" },
+    { "src": "/safari-pinned-tab.svg", "dest": "/safari-pinned-tab.svg" },
+    { "src": "/browserconfig.xml", "dest": "/browserconfig.xml" },
+    { "src": "/site.webmanifest", "dest": "/site.webmanifest" },
+    { "src": "/(.*)",         "dest": "/index.html"     }
+  ],
+  "env": {
+    "PYTHONPATH": "."
+  }
+}

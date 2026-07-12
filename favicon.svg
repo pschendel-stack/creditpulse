@@ -1,0 +1,6 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">CreditPulse favicon</title>
+  <desc id="desc">A vivid red circular icon with a bold white heartbeat pulse line.</desc>
+  <circle cx="256" cy="256" r="236" fill="#E50914"/>
+  <path d="M64 256 H136 L169 224 L209 292 L262 116 L320 336 L354 232 L392 264 H448" stroke="#FFFFFF" stroke-width="52" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
