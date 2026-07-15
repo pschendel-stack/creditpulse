@@ -482,6 +482,221 @@ def _plausible_portfolio(invs: list) -> bool:
     return near_par / total >= 0.6
 
 
+def _has_bdc_aggregate_parse_rows(invs: list) -> bool:
+    """Detect SOI parses that accidentally captured rollup rows as positions."""
+    aggregate_patterns = (
+        r'^investments?\s*(?:\(|$)',
+        r'^investments?\s+(?:before|after|in)\b',
+        r'^investment\s+fund\s+after\b',
+        r'^cash\s*&\s*cash\s+equivalents\b',
+        r'^total\s+(?:assets|investments|portfolio)\b',
+    )
+    for inv in invs[:25]:
+        name = re.sub(r'\s+', ' ', inv.get("name", "")).strip().lower()
+        if any(re.search(p, name, re.IGNORECASE) for p in aggregate_patterns):
+            return True
+    return False
+
+
+IXBRL_BDC_INVESTMENT_TAGS = {
+    "fv": "us-gaap:InvestmentOwnedAtFairValue",
+    "cost": "us-gaap:InvestmentOwnedAtCost",
+    "par": "us-gaap:InvestmentOwnedBalancePrincipalAmount",
+    "shares": "us-gaap:InvestmentOwnedBalanceShares",
+}
+
+IXBRL_BDC_INVESTMENT_TAG_TO_KEY = {v: k for k, v in IXBRL_BDC_INVESTMENT_TAGS.items()}
+
+IXBRL_SECURITY_DESCRIPTOR_RE = re.compile(
+    r'^(?:senior secured|senior unsecured|subordinated|unsecured|term loan|'
+    r'revolving|delayed draw|first lien|second lien|1st lien|2nd lien|'
+    r'common stock|preferred stock|warrant|membership interest|equity|loan|note|other)\b',
+    re.IGNORECASE,
+)
+
+IXBRL_SECURITY_DESCRIPTOR_ANY_RE = re.compile(
+    r'\b(?:senior secured|senior unsecured|subordinated|unsecured|term loan|'
+    r'revolving|delayed draw|first lien|second lien|1st lien|2nd lien|'
+    r'common stock|preferred stock|warrant|membership interest|equity|loan|note|other)\b',
+    re.IGNORECASE,
+)
+
+
+def _parse_bdc_ixbrl_investment_domain(domain: str) -> dict:
+    """Parse InvestmentIdentifierAxis text into a borrower name and type.
+
+    HTGC-style schedules expose investment rows as inline-XBRL facts instead
+    of ordinary row-oriented tables. The typed member usually looks like:
+    "Debt Investments, Industry, Borrower, Senior Secured, May 2028, ...".
+    Borrower names can contain commas (", Inc."), so collect name fragments
+    until a security descriptor starts.
+    """
+    raw = re.sub(r'\s+', ' ', domain or '').strip()
+    raw = re.sub(r'^Investment, Identifier \[Domain\]:\s*', '', raw, flags=re.IGNORECASE)
+    raw = re.sub(r'\s*\(\d+\)\s*$', '', raw).strip()
+
+    if re.search(r'\s+and\s+', raw, re.IGNORECASE):
+        prefix, after_and = re.split(r'\s+and\s+', raw, maxsplit=1, flags=re.IGNORECASE)
+        name_parts = []
+        rest = []
+        for part in [p.strip() for p in after_and.split(',') if p.strip()]:
+            descriptor_m = IXBRL_SECURITY_DESCRIPTOR_ANY_RE.search(part)
+            if descriptor_m:
+                borrower_part = part[:descriptor_m.start()].strip()
+                if borrower_part:
+                    name_parts.append(borrower_part)
+                rest = [part[descriptor_m.start():].strip()]
+                break
+            if re.search(r'\bmaturity\s+date\b', part, re.IGNORECASE):
+                rest = [part]
+                break
+            name_parts.append(part)
+        category_m = re.match(r'^((?:debt|equity|warrant|preferred|common|investment fund)\s+investments?)\b',
+                              prefix, re.IGNORECASE)
+        category = category_m.group(1) if category_m else prefix.strip()
+        borrower = ', '.join(name_parts).strip() or after_and.strip()
+        borrower = re.sub(r'\s+and$', '', borrower, flags=re.IGNORECASE).strip()
+        itype = ', '.join([category] + rest[:2]) if rest else category
+        parts = [p.strip() for p in raw.split(',') if p.strip()]
+        return {"name": borrower, "type": itype, "raw": raw, "parts": parts}
+
+    parts = [p.strip() for p in raw.split(',') if p.strip()]
+    while parts and re.match(r'^\(\d+\)$', parts[-1]):
+        parts.pop()
+
+    category = parts[0] if parts else "Investment"
+    start = 2 if len(parts) >= 3 and re.search(r'investments?|warrants?|debt|equity|preferred|common',
+                                                category, re.IGNORECASE) else 0
+    if len(parts) > start + 1 and parts[start].lower() == "other":
+        start += 1
+
+    name_parts = []
+    rest = []
+    for idx in range(start, len(parts)):
+        part = parts[idx]
+        if IXBRL_SECURITY_DESCRIPTOR_RE.search(part):
+            rest = parts[idx:]
+            break
+        name_parts.append(part)
+
+    borrower = ', '.join(name_parts).strip()
+    borrower = re.sub(r'\s+and$', '', borrower, flags=re.IGNORECASE).strip()
+    if not borrower and len(parts) > start:
+        borrower = parts[start]
+    if not borrower:
+        borrower = raw or "Unknown"
+
+    itype = ', '.join([category] + rest[:2]) if rest else category
+    return {"name": borrower, "type": itype, "raw": raw, "parts": parts}
+
+
+def _is_bdc_ixbrl_aggregate_domain(parsed: dict) -> bool:
+    raw = re.sub(r'\s+', ' ', parsed.get("raw", "")).strip()
+    name = re.sub(r'\s+', ' ', parsed.get("name", "")).strip()
+    if not raw:
+        return True
+    if re.search(r'\b(?:total|subtotal)\b', raw, re.IGNORECASE):
+        return True
+    if re.match(r'^(?:investments?|investment fund)(?:\s|\(|$)', name, re.IGNORECASE):
+        return True
+    if re.match(r'^(?:debt|equity|warrant)\s+investments?\b', name, re.IGNORECASE):
+        return True
+    if name.lower() in {"senior secured", "senior unsecured", "unsecured", "subordinated", "llc", "llc.", "inc", "inc."}:
+        return True
+    if re.search(r'\([\d.]+\s*%\)\s*$', raw) and not IXBRL_SECURITY_DESCRIPTOR_RE.search(raw):
+        return True
+    return False
+
+
+def _ixbrl_fact_number(tag) -> Optional[float]:
+    return _parse_ixbrl_number(tag)
+
+
+def _extract_bdc_investments_from_ixbrl_facts(html_text: str, period: str) -> list:
+    """Extract BDC investments from inline-XBRL investment facts.
+
+    Some BDCs, including HTGC, publish Schedule of Investments R-files as
+    dimensional XBRL facts rather than normal borrower rows. We group facts by
+    context, require the filing-period InvestmentIdentifierAxis, and exclude
+    contexts that are subtotal/total rows embedded in the schedule.
+    """
+    if "InvestmentOwnedAtFairValue" not in html_text or "InvestmentIdentifierAxis" not in html_text:
+        return []
+
+    soup = BeautifulSoup(html_text, "lxml")
+    contexts = {}
+    for ctx in soup.find_all(re.compile(r'(?:^|:)context$', re.IGNORECASE)):
+        cid = ctx.get("id")
+        if not cid:
+            continue
+        instant = ctx.find(re.compile(r'(?:^|:)instant$', re.IGNORECASE))
+        end_date = ctx.find(re.compile(r'(?:^|:)enddate$', re.IGNORECASE))
+        ctx_period = (instant or end_date).get_text(strip=True) if (instant or end_date) else None
+        if ctx_period != period:
+            continue
+
+        investment_domain = None
+        for member in ctx.find_all(re.compile(r'(?:typedmember|typedMember)$', re.IGNORECASE)):
+            if "InvestmentIdentifierAxis" in (member.get("dimension") or ""):
+                investment_domain = member.get_text(" ", strip=True)
+                break
+        if investment_domain:
+            contexts[cid] = investment_domain
+
+    if not contexts:
+        return []
+
+    facts = defaultdict(dict)
+    for tag in soup.find_all(re.compile(r'(?:nonfraction|nonnumeric)$', re.IGNORECASE)):
+        fact_name = tag.get("name")
+        key = IXBRL_BDC_INVESTMENT_TAG_TO_KEY.get(fact_name)
+        if not key:
+            continue
+        context_ref = tag.get("contextref") or tag.get("contextRef")
+        if context_ref not in contexts:
+            continue
+        val = _ixbrl_fact_number(tag)
+        if val is None:
+            continue
+        # Convert inline-XBRL dollars to the app's BDC convention: $K.
+        val_k = val / 1000.0
+        if key not in facts[context_ref] or abs(val_k) > abs(facts[context_ref][key]):
+            facts[context_ref][key] = val_k
+
+    investments = []
+    for context_ref, vals in facts.items():
+        fv = vals.get("fv")
+        if fv is None or fv <= 0:
+            continue
+
+        parsed = _parse_bdc_ixbrl_investment_domain(contexts[context_ref])
+        parts = parsed["parts"]
+        if (_is_bdc_ixbrl_aggregate_domain(parsed) or
+                re.match(r'^(?:total|subtotal)\b', parsed["name"], re.IGNORECASE) or
+                any(re.match(r'^(?:total|subtotal)\b', p, re.IGNORECASE) for p in parts)):
+            continue
+
+        par = vals.get("par")
+        cost = vals.get("cost")
+        denom = par if (par and par > 0) else cost if (cost and cost > 0) else fv
+        if denom <= 0:
+            continue
+        mark = fv / denom * 100
+        if mark <= 0 or mark > 20000:
+            continue
+
+        investments.append({
+            "name":     parsed["name"],
+            "type":     parsed["type"],
+            "currency": "USD",
+            "par":      round(denom, 2),
+            "fv":       round(fv, 2),
+            "mark":     round(mark, 2),
+        })
+
+    return investments
+
+
 def _parse_ixbrl_number(tag) -> Optional[float]:
     txt = tag.get_text("", strip=True)
     txt = txt.replace("\u2014", "").replace("\u2013", "").replace("—", "").replace("–", "")
@@ -1305,8 +1520,6 @@ def _extract_bdc_investments(html_text: str, period: str) -> list:
     bounds = _soi_bounds(html_text, period)
     if bounds:
         best = _extract_bdc_investments_from_section(html_text[bounds[0]:bounds[1]])
-        if _plausible_portfolio(best):
-            return best
 
     # Fallback: the fast section finder sometimes lands on a table of contents
     # or a note reference. Try a bounded number of candidate SOI headings and
@@ -1321,8 +1534,14 @@ def _extract_bdc_investments(html_text: str, period: str) -> list:
         if ((_plausible_portfolio(invs), sum(i["fv"] for i in invs), len(invs)) >
             (_plausible_portfolio(best), sum(i["fv"] for i in best), len(best))):
             best = invs
-            if _plausible_portfolio(best):
-                return best
+
+    fact_invs = _extract_bdc_investments_from_ixbrl_facts(html_text, period)
+    if (_plausible_portfolio(fact_invs) and
+            (_has_bdc_aggregate_parse_rows(best) or sum(i["fv"] for i in best) > sum(i["fv"] for i in fact_invs) * 1.5)):
+        return fact_invs
+    if ((_plausible_portfolio(fact_invs), sum(i["fv"] for i in fact_invs), len(fact_invs)) >
+        (_plausible_portfolio(best), sum(i["fv"] for i in best), len(best))):
+        return fact_invs
 
     if best:
         return best
