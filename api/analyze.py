@@ -1498,7 +1498,10 @@ def _parse_soi_table(chunk: str, state: dict, mult: float) -> list:
 
 
 def _extract_bdc_investments_from_section(section: str) -> list:
-    # Reporting units: ARCC uses millions, GSBD thousands
+    # Reporting units: ARCC states "in millions", GSBD "in thousands". Values are
+    # normalized to $K, so millions*1000, thousands*1. Some filers (OXSQ, TCPC,
+    # PFX) tabulate whole dollars and state no units — handled by magnitude
+    # inference below rather than defaulting to thousands (which 1000x-inflates).
     units_ctx = re.sub(r'<[^>]+>', ' ', section[:200_000])
     um = re.search(r'in\s+(millions|thousands)', units_ctx, re.IGNORECASE)
     mult = 1000.0 if (um and um.group(1).lower() == 'millions') else 1.0
@@ -1515,6 +1518,18 @@ def _extract_bdc_investments_from_section(section: str) -> list:
         if len(chunk) < 1500 or not DATE_ANY_RE.search(chunk):
             continue
         investments.extend(_parse_soi_table(chunk, state, mult))
+
+    # When the filing didn't state its units, infer scale from magnitude: a BDC
+    # position is ~$1M-$500M, so a median parsed FV above $1B (in $K) means the
+    # table was in whole dollars and every value is 1000x too large. Rescale to
+    # $K. Marks are ratios and unaffected. Robust because no fund has a $1B
+    # median position, so genuinely-thousands filings never trip this.
+    if not um and investments:
+        fvs = sorted(i["fv"] for i in investments if i.get("fv", 0) > 0)
+        if fvs and fvs[len(fvs) // 2] > 1_000_000:
+            for i in investments:
+                i["par"] = round(i["par"] / 1000, 2)
+                i["fv"]  = round(i["fv"] / 1000, 2)
 
     return investments
 
