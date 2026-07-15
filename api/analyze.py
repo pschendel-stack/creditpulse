@@ -491,6 +491,30 @@ def _has_bdc_aggregate_parse_rows(invs: list) -> bool:
     return False
 
 
+def _fact_names_look_valid(invs: list) -> bool:
+    """True if a fact parse's names look like real borrowers, not raw security
+    descriptors.
+
+    Some filers (e.g. GSBD's pre-2025 format) structure the
+    InvestmentIdentifierAxis domain so the name extractor yields the rate/date
+    descriptor ('Spread S + 6.50% Maturity 07/01/27') instead of the borrower.
+    When that happens the fact parse is plausible-looking but wrong, so the
+    HTML section scraper must still run as a cross-check rather than being
+    skipped. Names are considered descriptor-like when they begin with
+    'Spread'/'Coupon', mention 'Maturity', or lack an alphabetic word.
+    """
+    if not invs:
+        return False
+    bad = 0
+    for inv in invs:
+        name = re.sub(r'\s+', ' ', inv.get("name", "")).strip()
+        if (re.match(r'(?i)^(?:spread|coupon)\b', name) or
+                re.search(r'(?i)\bmaturity\b', name) or
+                not re.search(r'[A-Za-z]{3}', name)):
+            bad += 1
+    return bad / len(invs) < 0.2
+
+
 IXBRL_BDC_INVESTMENT_TAGS = {
     "fv": "us-gaap:InvestmentOwnedAtFairValue",
     "cost": "us-gaap:InvestmentOwnedAtCost",
@@ -601,18 +625,22 @@ def _is_bdc_ixbrl_aggregate_domain(parsed: dict) -> bool:
     return False
 
 
-def _extract_bdc_investments_from_ixbrl_facts(html_text: str, period: str) -> list:
+def _extract_bdc_investments_from_ixbrl_facts(html_text: str, period: str, soup=None) -> list:
     """Extract BDC investments from inline-XBRL investment facts.
 
     Some BDCs, including HTGC, publish Schedule of Investments R-files as
     dimensional XBRL facts rather than normal borrower rows. We group facts by
     context, require the filing-period InvestmentIdentifierAxis, and exclude
     contexts that are subtotal/total rows embedded in the schedule.
+
+    `soup` may be a pre-parsed BeautifulSoup of html_text (shared with the
+    metric extraction) to avoid re-parsing large primary documents.
     """
     if "InvestmentOwnedAtFairValue" not in html_text or "InvestmentIdentifierAxis" not in html_text:
         return []
 
-    soup = BeautifulSoup(html_text, "lxml")
+    if soup is None:
+        soup = BeautifulSoup(html_text, "lxml")
     contexts = {}
     for ctx in soup.find_all(re.compile(r'(?:^|:)context$', re.IGNORECASE)):
         cid = ctx.get("id")
@@ -875,13 +903,16 @@ def parse_nport_fund_level(xml_text: str) -> dict:
     return out
 
 
-def extract_realized_loss_metric(html_text: str, period: str, source: str) -> dict:
+def extract_realized_loss_metric(html_text: str, period: str, source: str, soup=None) -> dict:
     """Extract filing-level realized and unrealized gain/loss metrics from
     inline XBRL (the statement of operations).
 
     The SEC tags represent net signed values. Quarterly display logic later
     de-cumulates YTD figures and converts negative realized values into
     positive realized-loss bars; the unrealized net change stays signed.
+
+    `soup` may be a pre-parsed BeautifulSoup of html_text (shared with the
+    Schedule-of-Investments fact parser) to avoid re-parsing large documents.
     """
     result = {
         "periodEnd": period,
@@ -901,7 +932,8 @@ def extract_realized_loss_metric(html_text: str, period: str, source: str) -> di
     if not html_text:
         return result
 
-    soup = BeautifulSoup(html_text, "lxml")
+    if soup is None:
+        soup = BeautifulSoup(html_text, "lxml")
     contexts = _context_periods(soup)
 
     net_assets = _best_ixbrl_instant(soup, contexts, period, NET_ASSETS_TAGS)
@@ -1139,16 +1171,20 @@ async def fetch_bdc_filing_full(
         except Exception:
             pass
 
+        # Parse the primary document once and share the tree across the metric
+        # extraction and the SOI fact parser (each otherwise re-parses ~30MB).
+        primary_soup = BeautifulSoup(primary_html, "lxml") if primary_html else None
+
         # ── Metric extraction (statement of operations + balance sheet) ──────
         # extract_realized_loss_metric returns the empty metric for "" input,
         # covering the case where the primary document could not be fetched.
-        metric = extract_realized_loss_metric(primary_html or "", period, form)
+        metric = extract_realized_loss_metric(primary_html or "", period, form, soup=primary_soup)
 
         # ── SOI Method 2: parse the same primary document ────────────────────
         # Runs when Method 1 found nothing OR produced an implausible parse
         # (e.g. Blue Owl R-files yield garbled rows); keep the better result.
         if need_soi and primary_html and not _plausible_portfolio(investments):
-            invs2 = _extract_bdc_investments(primary_html, period)
+            invs2 = _extract_bdc_investments(primary_html, period, soup=primary_soup)
             # Prefer a plausible parse; row count breaks ties
             if ((_plausible_portfolio(invs2), len(invs2)) >
                 (_plausible_portfolio(investments), len(investments))):
@@ -1466,19 +1502,32 @@ def _extract_bdc_investments_from_section(section: str) -> list:
     return investments
 
 
-def _extract_bdc_investments(html_text: str, period: str) -> list:
-    """Parse the Schedule of Investments from a BDC 10-K/10-Q."""
+def _extract_bdc_investments(html_text: str, period: str, soup=None) -> list:
+    """Parse the Schedule of Investments from a BDC 10-K/10-Q.
+
+    `soup` may be a pre-parsed BeautifulSoup of html_text, shared with the
+    metric extraction, so a large primary document is parsed only once.
+    """
     if not html_text:
         return []
 
+    # Structured inline-XBRL investment facts are authoritative when present:
+    # they are the tagged form of the same schedule the HTML tables render. A
+    # plausible, non-aggregate fact parse lets us skip the far more expensive
+    # HTML section scraping entirely (the hot path for large filers). The fact
+    # parser reuses the shared soup, so this costs no extra document parse.
+    fact_invs = _extract_bdc_investments_from_ixbrl_facts(html_text, period, soup=soup)
+    if (_plausible_portfolio(fact_invs) and not _has_bdc_aggregate_parse_rows(fact_invs)
+            and _fact_names_look_valid(fact_invs)):
+        return fact_invs
+
+    # Fallback: HTML section scraper. The fast section finder sometimes lands on
+    # a table of contents or a note reference, so try a bounded number of
+    # candidate SOI headings and keep the strongest parsed portfolio.
     best = []
     bounds = _soi_bounds(html_text, period)
     if bounds:
         best = _extract_bdc_investments_from_section(html_text[bounds[0]:bounds[1]])
-
-    # Fallback: the fast section finder sometimes lands on a table of contents
-    # or a note reference. Try a bounded number of candidate SOI headings and
-    # keep the strongest parsed portfolio.
     tried = {bounds} if bounds else set()
     for start, end in _soi_candidate_bounds(html_text, period)[:30]:
         if (start, end) in tried:
@@ -1490,7 +1539,8 @@ def _extract_bdc_investments(html_text: str, period: str) -> list:
             (_plausible_portfolio(best), sum(i["fv"] for i in best), len(best))):
             best = invs
 
-    fact_invs = _extract_bdc_investments_from_ixbrl_facts(html_text, period)
+    # Facts may be present but implausible/aggregate; still let them win over a
+    # section parse that captured rollup rows or looks over-counted.
     if (_plausible_portfolio(fact_invs) and
             (_has_bdc_aggregate_parse_rows(best) or sum(i["fv"] for i in best) > sum(i["fv"] for i in fact_invs) * 1.5)):
         return fact_invs
