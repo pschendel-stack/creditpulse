@@ -214,24 +214,17 @@ async def cache_set(client: httpx.AsyncClient, ticker: str, result: dict):
     if not SUPABASE_URL or not SUPABASE_KEY:
         return
     try:
+        # Write only the columns the app actually reads back (cache_get selects
+        # result_json + computed_at). The full payload lives in result_json, so
+        # adding new result fields never requires a table migration — this is
+        # what previously broke caching (a POSTed column absent from the table
+        # 400s the whole write). ticker is the PK; all other columns are nullable.
         await client.post(
             f"{SUPABASE_URL}/rest/v1/analysis_cache",
             json={
                 "ticker": ticker,
-                "cik": result.get("cik", ""),
-                "fund_name": result.get("fund_name", ""),
-                "fund_type": result.get("fund_type", ""),
-                "quarters": result.get("quarters", []),
-                "summary": result.get("summary", {}),
-                "buckets": result.get("buckets", {}),
-                "rollrate": result.get("rollrate", {}),
-                "stress_pos": result.get("stress_positions", []),
-                "realized_losses": result.get("realized_losses", {}),
-                "credit_score": result.get("credit_score", {}),
-                "position_scatter": result.get("position_scatter", {}),
                 "result_json": result,
                 "computed_at": datetime.now(timezone.utc).isoformat(),
-                "error": None,
             },
             headers={
                 "apikey": SUPABASE_KEY,
