@@ -49,7 +49,9 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 # the analyzer skips cache reads/writes and fetches fresh SEC data.
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
-CACHE_TTL_DAYS = 7
+# 30-day cache: each ticker recomputes at most monthly, minimizing the
+# expensive (60-180s) uncached SEC analyses that drive serverless CPU usage.
+CACHE_TTL_DAYS = 30
 
 # BDC Value Map: dated valuation snapshots live in their own Supabase table; the
 # public read route serves them, refresh routes (secret-gated on Vercel) write.
