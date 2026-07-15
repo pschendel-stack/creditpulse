@@ -1,9 +1,9 @@
 """
 BDC / Interval Fund Analyzer — Vercel serverless API
-GET /api/analyze?ticker=CCFLX[&refresh=true]
+GET /api/analyze?ticker=CCLFX[&refresh=true]
 
 Supports:
-  - Interval funds (NPORT-P filings): CCFLX, CLOA, etc.
+  - Interval funds (NPORT-P filings): CCLFX, CRDIX, etc.
   - BDCs (10-K / 10-Q filings): ARCC, GSBD, ORCC, etc.
 
 Returns structured JSON with bucket analysis, roll-rate matrices, and stressed positions.
@@ -154,13 +154,6 @@ def period_to_label(period: str) -> str:
         return f"Q{q}'{dt.strftime('%y')}"
     except Exception:
         return period
-
-def is_quarter_end(date_str: str) -> bool:
-    try:
-        dt = datetime.strptime(date_str, "%Y-%m-%d")
-        return dt.month in (3, 6, 9, 12)
-    except Exception:
-        return False
 
 # ─── SUPABASE CACHE ────────────────────────────────────────────────────────────
 
@@ -608,10 +601,6 @@ def _is_bdc_ixbrl_aggregate_domain(parsed: dict) -> bool:
     return False
 
 
-def _ixbrl_fact_number(tag) -> Optional[float]:
-    return _parse_ixbrl_number(tag)
-
-
 def _extract_bdc_investments_from_ixbrl_facts(html_text: str, period: str) -> list:
     """Extract BDC investments from inline-XBRL investment facts.
 
@@ -655,7 +644,7 @@ def _extract_bdc_investments_from_ixbrl_facts(html_text: str, period: str) -> li
         context_ref = tag.get("contextref") or tag.get("contextRef")
         if context_ref not in contexts:
             continue
-        val = _ixbrl_fact_number(tag)
+        val = _parse_ixbrl_number(tag)
         if val is None:
             continue
         # Convert inline-XBRL dollars to the app's BDC convention: $K.
@@ -836,20 +825,6 @@ def _best_ixbrl_instant(soup, contexts: dict, period: str, tag_list: list) -> Op
     if not candidates:
         return None
     return sorted(candidates, key=lambda c: c[:2])[0][2]
-
-
-def parse_nport_net_assets(xml_text: str) -> Optional[float]:
-    """Fund-level net assets from an NPORT-P primary_doc.xml."""
-    if not xml_text:
-        return None
-    m = re.search(r'<netAssets>\s*(-?[\d.]+)\s*</netAssets>', xml_text)
-    if not m:
-        return None
-    try:
-        value = float(m.group(1))
-        return value if value > 0 else None
-    except ValueError:
-        return None
 
 
 # NPORT-P Part B Item B.4: amounts payable for borrowings, split by tenor
@@ -1054,9 +1029,6 @@ def calculate_quarterly_realized_losses(filings_or_metrics: list) -> list:
             row["realizedLoss"] = round(abs(value) if value < 0 else 0.0, 2)
 
     return rows
-
-
-calculateQuarterlyRealizedLosses = calculate_quarterly_realized_losses
 
 
 def generate_realized_loss_insight(rows: list) -> str:
@@ -2280,7 +2252,6 @@ async def analyze(
 
             tasks = [fetch_nport_xml(client, sem, cik, f["acc"]) for f in filings]
             xmls  = await asyncio.gather(*tasks)
-            net_assets = parse_nport_net_assets(xmls[-1]) if xmls else None
 
             leverage_rows = []
             for filing, xml_text in zip(filings, xmls):
@@ -2295,6 +2266,11 @@ async def analyze(
                     "assets": fl["totAssets"],
                     "debtIsProxy": fl["borrowingsIsProxy"],
                 })
+
+            # Latest quarter's net assets (leverage_rows is oldest-first)
+            net_assets = leverage_rows[-1]["equity"] if leverage_rows else None
+            if net_assets is not None and net_assets <= 0:
+                net_assets = None
                 realized_loss_metrics.append({
                     "periodEnd": filing["period"],
                     "quarter": _quarter_label_long(filing["period"]),
