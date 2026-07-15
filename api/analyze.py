@@ -147,6 +147,8 @@ INTERVAL_TICKER_CIK = {
     "FCRIX": "0001688897",
     "FCREX": "0001688897",
     "BMACX": "0002032432",
+    # Newly public BDC; EDGAR company search doesn't resolve the ticker yet.
+    "LIEN":  "0001843162",  # Chicago Atlantic BDC, Inc.
 }
 
 # ─── UTILITY ───────────────────────────────────────────────────────────────────
