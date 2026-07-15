@@ -1073,75 +1073,54 @@ def generate_realized_loss_insight(rows: list) -> str:
     )
 
 
-async def fetch_bdc_filing(
-    client: httpx.AsyncClient, sem: asyncio.Semaphore, cik: str, acc: str, period: str
-) -> list:
+async def fetch_bdc_filing_full(
+    client: httpx.AsyncClient, sem: asyncio.Semaphore, cik: str, acc: str,
+    period: str, form: str, need_soi: bool = True,
+) -> tuple:
+    """Fetch one BDC filing and return (investments, metric).
+
+    The primary 10-K/10-Q is downloaded once and reused for both the Schedule
+    of Investments parse (Method 2) and the statement-of-operations / balance-
+    sheet metric extraction, rather than each being fetched independently.
+
+    `need_soi=False` (the extra oldest filing kept only to de-cumulate YTD
+    figures) skips Schedule-of-Investments work and returns investments=[].
+    """
     cik_plain = str(int(cik))
     acc_path  = acc.replace("-", "")
     dir_url   = f"https://www.sec.gov/Archives/edgar/data/{cik_plain}/{acc_path}/"
 
+    investments = []
+    primary_html = None
+
     async with sem:
-        investments = []
-
-        # ── Method 1: FilingSummary.xml → XBRL R-file (fast path) ────────────
-        # Some R-files are "Not available" stubs; others are huge two-period
-        # pivot tables without maturity dates. Judge by extraction output, not
-        # by content heuristics — fall through to Method 2 if nothing parses.
-        try:
-            fs_r = await _get_retry(client, dir_url + "FilingSummary.xml", timeout=25)
-            if fs_r is not None:
-                fs_soup = BeautifulSoup(fs_r.text, "lxml")
-                for rep in fs_soup.find_all("report"):
-                    sn = rep.find("shortname") or rep.find("longname")
-                    fn_el = rep.find("htmlfilename")
-                    if sn and fn_el and re.search(r'schedules?\s+of\s+investments',
-                                                  sn.get_text(), re.IGNORECASE):
-                        fname = fn_el.get_text().strip()
-                        if fname:
-                            rr = await _get_retry(client, dir_url + fname, timeout=30)
-                            if rr is not None and len(rr.text) > 5000:
-                                investments = _extract_bdc_investments(rr.text, period)
-                            break
-        except Exception:
-            pass
-
-        # ── Method 2: Filing index HTM → primary 10-Q/10-K document ──────────
-        # Runs when Method 1 found nothing OR produced an implausible parse
-        # (e.g. Blue Owl R-files yield garbled rows); keep the better result.
-        if not _plausible_portfolio(investments):
+        # ── SOI Method 1: FilingSummary.xml → XBRL R-file (fast path) ─────────
+        # A small per-schedule render; lets funds (e.g. GSBD) whose R-file
+        # already yields a clean schedule skip the full-document parse. R-files
+        # can be "Not available" stubs or garbled pivots, so judge by extraction
+        # output and fall through to Method 2 (below) when nothing plausible parses.
+        if need_soi:
             try:
-                idx_r = await _get_retry(client, f"{dir_url}{acc}-index.htm", timeout=20)
-                if idx_r is not None:
-                    idx_soup = BeautifulSoup(idx_r.text, "lxml")
-                    for row in idx_soup.find_all("tr"):
-                        cells = [c.get_text().strip() for c in row.find_all(["td", "th"])]
-                        if len(cells) > 3 and cells[3] in ("10-Q", "10-K"):
-                            link = row.find("a", href=True)
-                            if link:
-                                fname = link["href"].rstrip("/").split("/")[-1]
-                                if fname.lower().endswith(".htm"):
-                                    doc_r = await _get_retry(client, dir_url + fname, timeout=120)
-                                    if doc_r is not None:
-                                        invs2 = _extract_bdc_investments(doc_r.text, period)
-                                        # Prefer a plausible parse; row count breaks ties
-                                        if ((_plausible_portfolio(invs2), len(invs2)) >
-                                            (_plausible_portfolio(investments), len(investments))):
-                                            investments = invs2
-                                    break
+                fs_r = await _get_retry(client, dir_url + "FilingSummary.xml", timeout=25)
+                if fs_r is not None:
+                    fs_soup = BeautifulSoup(fs_r.text, "lxml")
+                    for rep in fs_soup.find_all("report"):
+                        sn = rep.find("shortname") or rep.find("longname")
+                        fn_el = rep.find("htmlfilename")
+                        if sn and fn_el and re.search(r'schedules?\s+of\s+investments',
+                                                      sn.get_text(), re.IGNORECASE):
+                            fname = fn_el.get_text().strip()
+                            if fname:
+                                rr = await _get_retry(client, dir_url + fname, timeout=30)
+                                if rr is not None and len(rr.text) > 5000:
+                                    investments = _extract_bdc_investments(rr.text, period)
+                            break
             except Exception:
                 pass
 
-    return investments
-
-
-async def fetch_bdc_realized_loss_metric(
-    client: httpx.AsyncClient, sem: asyncio.Semaphore, cik: str, acc: str, period: str, form: str
-) -> dict:
-    cik_plain = str(int(cik))
-    acc_path  = acc.replace("-", "")
-    dir_url   = f"https://www.sec.gov/Archives/edgar/data/{cik_plain}/{acc_path}/"
-
-    async with sem:
+        # ── Primary 10-K/10-Q, fetched once ──────────────────────────────────
+        # Always needed for the metric extraction; also feeds SOI Method 2 when
+        # the R-file path above didn't yield a plausible portfolio.
         try:
             idx_r = await _get_retry(client, f"{dir_url}{acc}-index.htm", timeout=20)
             if idx_r is not None:
@@ -1155,23 +1134,27 @@ async def fetch_bdc_realized_loss_metric(
                             if fname.lower().endswith(".htm"):
                                 doc_r = await _get_retry(client, dir_url + fname, timeout=120)
                                 if doc_r is not None:
-                                    return extract_realized_loss_metric(doc_r.text, period, form)
+                                    primary_html = doc_r.text
                         break
         except Exception:
             pass
 
-    return {
-        "periodEnd": period,
-        "quarter": _quarter_label_long(period),
-        "periodStart": None,
-        "originalValue": None,
-        "metricType": "unavailable",
-        "source": form,
-        "sourceTag": None,
-        "dataAvailable": False,
-        "netAssets": None,
-        "totalDebt": None,
-    }
+        # ── Metric extraction (statement of operations + balance sheet) ──────
+        # extract_realized_loss_metric returns the empty metric for "" input,
+        # covering the case where the primary document could not be fetched.
+        metric = extract_realized_loss_metric(primary_html or "", period, form)
+
+        # ── SOI Method 2: parse the same primary document ────────────────────
+        # Runs when Method 1 found nothing OR produced an implausible parse
+        # (e.g. Blue Owl R-files yield garbled rows); keep the better result.
+        if need_soi and primary_html and not _plausible_portfolio(investments):
+            invs2 = _extract_bdc_investments(primary_html, period)
+            # Prefer a plausible parse; row count breaks ties
+            if ((_plausible_portfolio(invs2), len(invs2)) >
+                (_plausible_portfolio(investments), len(investments))):
+                investments = invs2
+
+    return investments, metric
 
 
 MONTH_NUM = {
@@ -2293,21 +2276,24 @@ async def analyze(
             metric_filings = get_recent_bdc_filings(subs, n=7)
             display_periods = {f["period"] for f in filings}
 
-            tasks   = [fetch_bdc_filing(client, sem, cik, f["acc"], f["period"]) for f in filings]
-            metric_tasks = [
-                fetch_bdc_realized_loss_metric(client, sem, cik, f["acc"], f["period"], f["form"])
+            # One task per filing: the primary 10-K/10-Q is downloaded once and
+            # feeds both the Schedule-of-Investments parse and the metric
+            # extraction. Only the displayed filings need the SOI parse; the
+            # extra oldest filing supplies metrics for YTD de-cumulation only.
+            combined = await asyncio.gather(*[
+                fetch_bdc_filing_full(client, sem, cik, f["acc"], f["period"], f["form"],
+                                      need_soi=(f["period"] in display_periods))
                 for f in metric_filings
-            ]
-            results, realized_loss_metrics = await asyncio.gather(
-                asyncio.gather(*tasks),
-                asyncio.gather(*metric_tasks),
-            )
+            ])
+            realized_loss_metrics = [m for (_, m) in combined]
+            soi_by_period = {f["period"]: inv for f, (inv, _) in zip(metric_filings, combined)}
+
             net_assets = next((m.get("netAssets") for m in reversed(realized_loss_metrics)
                                if m.get("netAssets")), None)
 
-            for filing, invs in zip(filings, results):
+            for filing in filings:
                 label = period_to_label(filing["period"])
-                all_data[label] = invs
+                all_data[label] = soi_by_period.get(filing["period"], [])
                 quarters.append(label)
 
             # Leverage rows come from the same parsed iXBRL metric documents,
