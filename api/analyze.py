@@ -569,6 +569,34 @@ def _parse_bdc_ixbrl_investment_domain(domain: str) -> dict:
     raw = re.sub(r'^Investment, Identifier \[Domain\]:\s*', '', raw, flags=re.IGNORECASE)
     raw = re.sub(r'\s*\(\d+\)\s*$', '', raw).strip()
 
+    # Hyphen-delimited format (KBDC and others): levels are separated by " - "
+    # instead of commas, e.g.
+    #   "Debt Investments - Industry - Borrower, LLC - First lien senior secured loan - Interest Rate ... - Maturity ..."
+    # Comma-splitting collapses this into a name that begins with the category,
+    # which the aggregate filter then discards (dropping most positions). Detect
+    # it when hyphens are the dominant delimiter and pull the borrower from
+    # between the industry level and the security descriptor.
+    comma_parts = [p for p in raw.split(',') if p.strip()]
+    hyphen_parts = [p.strip() for p in re.split(r'\s+[-–]\s+', raw) if p.strip()]
+    if (len(hyphen_parts) >= 3 and len(hyphen_parts) > len(comma_parts) and
+            re.match(r'^(?:debt|equity|warrant|preferred|common|investment fund)\s+investments?\b',
+                     hyphen_parts[0], re.IGNORECASE)):
+        start = 2  # skip category [0] and industry [1]
+        if len(hyphen_parts) > start and hyphen_parts[start].lower() == "other":
+            start += 1
+        boundary = re.compile(r'^(?:interest rate|reference rate|spread|coupon|acquisition date|'
+                              r'maturity|par\b|shares|units|class\b|series\b)', re.IGNORECASE)
+        name_parts, rest = [], []
+        for idx in range(start, len(hyphen_parts)):
+            part = hyphen_parts[idx]
+            if IXBRL_SECURITY_DESCRIPTOR_RE.search(part) or boundary.match(part):
+                rest = hyphen_parts[idx:]
+                break
+            name_parts.append(part)
+        borrower = ' - '.join(name_parts).strip() or (hyphen_parts[start] if len(hyphen_parts) > start else raw)
+        itype = ' - '.join([hyphen_parts[0]] + rest[:2]) if rest else hyphen_parts[0]
+        return {"name": borrower, "type": itype, "raw": raw, "parts": hyphen_parts}
+
     if re.search(r'\s+and\s+', raw, re.IGNORECASE):
         prefix, after_and = re.split(r'\s+and\s+', raw, maxsplit=1, flags=re.IGNORECASE)
         name_parts = []
