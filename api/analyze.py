@@ -17,13 +17,26 @@ from typing import Optional
 import xml.etree.ElementTree as ET
 
 import httpx
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from mangum import Mangum
 from lxml import etree
 from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 import warnings
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
+
+# BDC Value Map subsystem (peer-relative valuation of the public BDC universe).
+from api.bdc_universe import active_bdc_universe
+from api.bdc_value_map import (
+    apply_market_data_to_snapshot,
+    fetch_sec_company_facts_market_metrics,
+    load_latest_snapshots,
+    load_value_map_response,
+    save_value_snapshot,
+    snapshot_store_configured,
+    value_map_snapshot_from_analysis,
+)
+from api.market_data import get_market_data_provider
 
 # ─── APP ───────────────────────────────────────────────────────────────────────
 
@@ -37,6 +50,13 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
 CACHE_TTL_DAYS = 7
+
+# BDC Value Map: dated valuation snapshots live in their own Supabase table; the
+# public read route serves them, refresh routes (secret-gated on Vercel) write.
+BDC_VALUE_SNAPSHOT_TABLE = os.environ.get("BDC_VALUE_SNAPSHOT_TABLE", "bdc_value_snapshots")
+BDC_REFRESH_SECRET = os.environ.get("BDC_REFRESH_SECRET", "")
+BDC_VALUE_PUBLIC_REFRESH = os.environ.get("BDC_VALUE_PUBLIC_REFRESH", "").lower() in {"1", "true", "yes"}
+CRON_SECRET = os.environ.get("CRON_SECRET", "")
 
 EDGAR_UA = {"User-Agent": "BDC Analyzer pschendel@gmail.com"}
 DATA_UA  = {"User-Agent": "BDC Analyzer pschendel@gmail.com", "Accept": "application/json"}
@@ -2444,6 +2464,164 @@ async def analyze(
         await cache_set(client, ticker, result)
 
         return result
+
+@app.get("/api/bdc-value-map")
+async def bdc_value_map(
+    peer_group: Optional[str] = Query(None, description="Optional peer-group filter"),
+):
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        response = await load_value_map_response(
+            client,
+            SUPABASE_URL,
+            SUPABASE_KEY,
+            peer_group=peer_group,
+            snapshot_table=BDC_VALUE_SNAPSHOT_TABLE,
+        )
+        response["capabilities"]["refreshEnabled"] = (
+            response["capabilities"]["refreshEnabled"]
+            and (BDC_VALUE_PUBLIC_REFRESH or not os.environ.get("VERCEL"))
+        )
+        response["capabilities"]["refreshRequiresSecret"] = bool(
+            os.environ.get("VERCEL") and BDC_REFRESH_SECRET and not BDC_VALUE_PUBLIC_REFRESH
+        )
+        return response
+
+
+def _authorized_bdc_refresh(request: Request, secret: Optional[str]) -> bool:
+    refresh_is_public = BDC_VALUE_PUBLIC_REFRESH or not os.environ.get("VERCEL")
+    if refresh_is_public:
+        return not BDC_REFRESH_SECRET or secret in (None, BDC_REFRESH_SECRET)
+    bearer = request.headers.get("authorization", "")
+    allowed = {s for s in (BDC_REFRESH_SECRET, CRON_SECRET) if s}
+    return bool((secret and secret in allowed) or any(bearer == f"Bearer {s}" for s in allowed))
+
+
+@app.api_route("/api/bdc-value-map/refresh", methods=["GET", "POST"])
+async def refresh_bdc_value_map(
+    request: Request,
+    secret: Optional[str] = Query(None, description="Batch refresh secret"),
+    tickers: Optional[str] = Query(None, description="Comma-separated ticker subset"),
+    max_items: int = Query(5, ge=1, le=50, description="Safety cap for one refresh call"),
+    refresh_analysis: bool = Query(False, description="Force SEC analyzer recomputation"),
+):
+    if not snapshot_store_configured(SUPABASE_URL, SUPABASE_KEY):
+        raise HTTPException(503, "BDC Value Map snapshot storage is not configured")
+
+    if not _authorized_bdc_refresh(request, secret):
+        raise HTTPException(403, "Invalid refresh secret")
+
+    selected = {t.strip().upper() for t in (tickers or "").split(",") if t.strip()}
+    universe = [u for u in active_bdc_universe() if not selected or u["ticker"] in selected]
+    universe = universe[:max_items]
+    provider = get_market_data_provider()
+    refreshed, failures = [], []
+
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        previous = {
+            row.get("ticker"): row
+            for row in await load_latest_snapshots(
+                client, SUPABASE_URL, SUPABASE_KEY, BDC_VALUE_SNAPSHOT_TABLE
+            )
+        }
+        for row in universe:
+            ticker = row["ticker"]
+            try:
+                market = await provider.quote(client, ticker)
+                sec_market = await fetch_sec_company_facts_market_metrics(client, row["cik"])
+                market = {**(market or {}), **sec_market}
+                cached = None if refresh_analysis else await cache_get(client, ticker)
+                analysis_result = cached or await analyze(ticker=ticker, refresh=True)
+                snapshot = value_map_snapshot_from_analysis(row, analysis_result, market)
+                stored = await save_value_snapshot(
+                    client, SUPABASE_URL, SUPABASE_KEY, BDC_VALUE_SNAPSHOT_TABLE, snapshot
+                )
+                refreshed.append({"ticker": ticker, "stored": bool(stored)})
+            except Exception as exc:
+                prior = previous.get(ticker)
+                if prior:
+                    prior = dict(prior)
+                    prior["stale"] = True
+                    prior["error"] = str(exc)
+                    await save_value_snapshot(
+                        client, SUPABASE_URL, SUPABASE_KEY, BDC_VALUE_SNAPSHOT_TABLE, prior, error=str(exc)
+                    )
+                failures.append({"ticker": ticker, "error": str(exc)})
+
+    return {
+        "provider": provider.name,
+        "snapshotTable": BDC_VALUE_SNAPSHOT_TABLE,
+        "processed": len(refreshed) + len(failures),
+        "refreshed": refreshed,
+        "failures": failures,
+        "note": (
+            "Configure MARKET_DATA_PROVIDER/FMP_API_KEY and Supabase to persist production snapshots. "
+            "The normal /api/bdc-value-map route reads snapshots only."
+        ),
+    }
+
+
+@app.api_route("/api/bdc-value-map/refresh-market", methods=["GET", "POST"])
+async def refresh_bdc_value_map_market(
+    request: Request,
+    secret: Optional[str] = Query(None, description="Batch refresh secret"),
+    tickers: Optional[str] = Query(None, description="Comma-separated ticker subset"),
+    max_items: int = Query(50, ge=1, le=50, description="Safety cap for one market refresh call"),
+):
+    if not snapshot_store_configured(SUPABASE_URL, SUPABASE_KEY):
+        raise HTTPException(503, "BDC Value Map snapshot storage is not configured")
+    if not _authorized_bdc_refresh(request, secret):
+        raise HTTPException(403, "Invalid refresh secret")
+
+    selected = {t.strip().upper() for t in (tickers or "").split(",") if t.strip()}
+    universe = [u for u in active_bdc_universe() if not selected or u["ticker"] in selected]
+    universe = universe[:max_items]
+    provider = get_market_data_provider()
+    refreshed, failures = [], []
+
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        previous = {
+            row.get("ticker"): row
+            for row in await load_latest_snapshots(
+                client, SUPABASE_URL, SUPABASE_KEY, BDC_VALUE_SNAPSHOT_TABLE
+            )
+        }
+        sem = asyncio.Semaphore(8)
+
+        async def refresh_one(row):
+            ticker = row["ticker"]
+            prior = previous.get(ticker)
+            if not prior:
+                failures.append({"ticker": ticker, "error": "No existing CreditPulse snapshot; run a full refresh first."})
+                return
+            async with sem:
+                try:
+                    market = await provider.quote(client, ticker)
+                    snapshot = apply_market_data_to_snapshot(prior, market)
+                    stored = await save_value_snapshot(
+                        client, SUPABASE_URL, SUPABASE_KEY, BDC_VALUE_SNAPSHOT_TABLE, snapshot
+                    )
+                    refreshed.append({"ticker": ticker, "stored": bool(stored)})
+                except Exception as exc:
+                    stale = dict(prior)
+                    stale["stale"] = True
+                    stale["error"] = str(exc)
+                    await save_value_snapshot(
+                        client, SUPABASE_URL, SUPABASE_KEY, BDC_VALUE_SNAPSHOT_TABLE, stale, error=str(exc)
+                    )
+                    failures.append({"ticker": ticker, "error": str(exc)})
+
+        await asyncio.gather(*(refresh_one(row) for row in universe))
+
+    return {
+        "provider": provider.name,
+        "snapshotTable": BDC_VALUE_SNAPSHOT_TABLE,
+        "mode": "market-only",
+        "processed": len(refreshed) + len(failures),
+        "refreshed": refreshed,
+        "failures": failures,
+        "note": "Updated market-driven fields only; CreditPulse Scores and filing-derived metrics were not recomputed.",
+    }
+
 
 # ─── VERCEL HANDLER ────────────────────────────────────────────────────────────
 
