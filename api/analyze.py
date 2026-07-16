@@ -149,6 +149,7 @@ INTERVAL_TICKER_CIK = {
     "BMACX": "0002032432",
     # Newly public BDC; EDGAR company search doesn't resolve the ticker yet.
     "LIEN":  "0001843162",  # Chicago Atlantic BDC, Inc.
+    "OFLEX": "0002028436",  # T. Rowe Price OHA Flexible Credit Income Fund (interval fund, NPORT-P)
 }
 
 # ─── UTILITY ───────────────────────────────────────────────────────────────────
@@ -597,6 +598,43 @@ def _parse_bdc_ixbrl_investment_domain(domain: str) -> dict:
         itype = ' - '.join([hyphen_parts[0]] + rest[:2]) if rest else hyphen_parts[0]
         return {"name": borrower, "type": itype, "raw": raw, "parts": hyphen_parts}
 
+    # Inline-label format (Apollo Debt Solutions and peers): the schedule packs
+    # everything into one string with keyword labels instead of delimiters, e.g.
+    #   "<Industry> <Short> <Legal Name> Investment Type <descriptor> Interest Rate <rate> Maturity Date <date>"
+    # or equity: "<Industry> <Legal Name> Security Type Common Equity - Stock".
+    # Comma/hyphen splitting can't see those boundaries, so the descriptor —
+    # including "Maturity Date ..." — leaks into the borrower name; the whole
+    # fact parse is then discarded by the "looks like a descriptor" guard.
+    # Cut the name at the first inline label or security descriptor. HTGC/KBDC
+    # comma/hyphen formats begin with a "Debt/Equity Investments" category and
+    # are handled above, so they never reach this branch.
+    label_re = re.compile(
+        r'\b(?:Investment Type|Security Type|Interest Rate|Reference Rate|Maturity Date)\b',
+        re.IGNORECASE)
+    has_type_label = re.search(r'\b(?:Investment|Security) Type\b', raw, re.IGNORECASE)
+    has_rate_and_maturity = (re.search(r'\bInterest Rate\b', raw, re.IGNORECASE) and
+                             re.search(r'\bMaturity Date\b', raw, re.IGNORECASE))
+    starts_with_category = re.match(
+        r'^(?:debt|equity|warrant|preferred|common|investment fund)\s+investments?\b',
+        raw, re.IGNORECASE)
+    if (has_type_label or has_rate_and_maturity) and not starts_with_category:
+        cut = len(raw)
+        lm = label_re.search(raw)
+        if lm:
+            cut = min(cut, lm.start())
+        dm = IXBRL_SECURITY_DESCRIPTOR_ANY_RE.search(raw)
+        if dm:
+            cut = min(cut, dm.start())
+        head = raw[:cut].strip(" ,-–")
+        tail = raw[cut:].strip()
+        if head:
+            itype = re.sub(r'^(?:Investment Type|Security Type)\s*', '', tail, flags=re.IGNORECASE)
+            tm = re.search(r'\b(?:Interest Rate|Reference Rate|Maturity Date)\b', itype, re.IGNORECASE)
+            if tm:
+                itype = itype[:tm.start()]
+            itype = itype.strip(" ,-–")
+            return {"name": head, "type": itype or "Investment", "raw": raw, "parts": [head]}
+
     if re.search(r'\s+and\s+', raw, re.IGNORECASE):
         prefix, after_and = re.split(r'\s+and\s+', raw, maxsplit=1, flags=re.IGNORECASE)
         name_parts = []
@@ -671,7 +709,17 @@ def _is_bdc_ixbrl_aggregate_domain(parsed: dict) -> bool:
 
 
 def _extract_bdc_investments_from_ixbrl_facts(html_text: str, period: str, soup=None) -> list:
-    """Extract BDC investments from inline-XBRL investment facts.
+    """Investments only; see _ixbrl_facts_schedule."""
+    return _ixbrl_facts_schedule(html_text, period, soup=soup)[0]
+
+
+def _ixbrl_facts_schedule(html_text: str, period: str, soup=None) -> tuple:
+    """Parse the Schedule of Investments from inline-XBRL investment facts.
+
+    Returns (investments, declared_total) where `declared_total` is the filing's
+    own fund-level portfolio fair value in $K, or None when the filing doesn't
+    state one. The caller uses it to decide whether these facts or the HTML
+    section scrape better reconcile to what the fund says it owns.
 
     Some BDCs, including HTGC, publish Schedule of Investments R-files as
     dimensional XBRL facts rather than normal borrower rows. We group facts by
@@ -682,11 +730,12 @@ def _extract_bdc_investments_from_ixbrl_facts(html_text: str, period: str, soup=
     metric extraction) to avoid re-parsing large primary documents.
     """
     if "InvestmentOwnedAtFairValue" not in html_text or "InvestmentIdentifierAxis" not in html_text:
-        return []
+        return [], None
 
     if soup is None:
         soup = BeautifulSoup(html_text, "lxml")
     contexts = {}
+    period_no_axis = set()
     for ctx in soup.find_all(re.compile(r'(?:^|:)context$', re.IGNORECASE)):
         cid = ctx.get("id")
         if not cid:
@@ -704,17 +753,29 @@ def _extract_bdc_investments_from_ixbrl_facts(html_text: str, period: str, soup=
                 break
         if investment_domain:
             contexts[cid] = investment_domain
+        else:
+            period_no_axis.add(cid)
 
     if not contexts:
-        return []
+        return [], None
 
     facts = defaultdict(dict)
+    declared_totals = []
     for tag in soup.find_all(re.compile(r'(?:nonfraction|nonnumeric)$', re.IGNORECASE)):
         fact_name = tag.get("name")
         key = IXBRL_BDC_INVESTMENT_TAG_TO_KEY.get(fact_name)
         if not key:
             continue
         context_ref = tag.get("contextref") or tag.get("contextRef")
+        # Fund-level (no per-investment axis) fair value: the filing's own
+        # statement of what the portfolio is worth. Used below to referee the
+        # subtotal rules.
+        if context_ref in period_no_axis:
+            if key == "fv":
+                val = _parse_ixbrl_number(tag)
+                if val is not None and val > 0:
+                    declared_totals.append(val / 1000.0)
+            continue
         if context_ref not in contexts:
             continue
         val = _parse_ixbrl_number(tag)
@@ -725,38 +786,65 @@ def _extract_bdc_investments_from_ixbrl_facts(html_text: str, period: str, soup=
         if key not in facts[context_ref] or abs(val_k) > abs(facts[context_ref][key]):
             facts[context_ref][key] = val_k
 
-    investments = []
-    for context_ref, vals in facts.items():
-        fv = vals.get("fv")
-        if fv is None or fv <= 0:
-            continue
+    def _build(detail_ok) -> list:
+        """Assemble the schedule, keeping only facts `detail_ok` accepts."""
+        out = []
+        for context_ref, vals in facts.items():
+            fv = vals.get("fv")
+            if fv is None or fv <= 0:
+                continue
+            if detail_ok is not None and not detail_ok(vals):
+                continue
 
-        parsed = _parse_bdc_ixbrl_investment_domain(contexts[context_ref])
-        parts = parsed["parts"]
-        if (_is_bdc_ixbrl_aggregate_domain(parsed) or
-                re.match(r'^(?:total|subtotal)\b', parsed["name"], re.IGNORECASE) or
-                any(re.match(r'^(?:total|subtotal)\b', p, re.IGNORECASE) for p in parts)):
-            continue
+            parsed = _parse_bdc_ixbrl_investment_domain(contexts[context_ref])
+            parts = parsed["parts"]
+            if (_is_bdc_ixbrl_aggregate_domain(parsed) or
+                    re.match(r'^(?:total|subtotal)\b', parsed["name"], re.IGNORECASE) or
+                    any(re.match(r'^(?:total|subtotal)\b', p, re.IGNORECASE) for p in parts)):
+                continue
 
-        par = vals.get("par")
-        cost = vals.get("cost")
-        denom = par if (par and par > 0) else cost if (cost and cost > 0) else fv
-        if denom <= 0:
-            continue
-        mark = fv / denom * 100
-        if mark <= 0 or mark > 20000:
-            continue
+            par = vals.get("par")
+            cost = vals.get("cost")
+            denom = par if (par and par > 0) else cost if (cost and cost > 0) else fv
+            if denom <= 0:
+                continue
+            mark = fv / denom * 100
+            if mark <= 0 or mark > 20000:
+                continue
 
-        investments.append({
-            "name":     parsed["name"],
-            "type":     parsed["type"],
-            "currency": "USD",
-            "par":      round(denom, 2),
-            "fv":       round(fv, 2),
-            "mark":     round(mark, 2),
-        })
+            out.append({
+                "name":     parsed["name"],
+                "type":     parsed["type"],
+                "currency": "USD",
+                "par":      round(denom, 2),
+                "fv":       round(fv, 2),
+                "mark":     round(mark, 2),
+            })
+        return out
 
-    return investments
+    # Filers tag subtotal rows (industry rollups, company totals over their own
+    # tranches) on the same InvestmentIdentifierAxis as real positions, which
+    # inflates the portfolio badly: ARCC $29.5B→$34.4B, OBDC $15.3B→$18.4B,
+    # Apollo's pre-2025Q2 format 2.6x. Real positions carry valuation detail, but
+    # WHICH detail varies by filer — ARCC tags LLC/LP member interests with cost
+    # and no principal/shares, while Apollo's old format tags its subtotals *with*
+    # cost. No single rule fits every filer, so build the schedule under each and
+    # let the filing's own declared portfolio total pick the closest.
+    has_par_shares = lambda v: (v.get("par") or 0) > 0 or (v.get("shares") or 0) > 0
+    has_any_detail = lambda v: has_par_shares(v) or (v.get("cost") or 0) > 0
+    candidates = [c for c in (_build(has_par_shares), _build(has_any_detail), _build(None)) if c]
+
+    # Fund-level totals include per-industry subtotals, so the grand total is the
+    # largest of them.
+    declared_total = max(declared_totals) if declared_totals else None
+    if not candidates:
+        return [], declared_total
+    if declared_total and declared_total > 0:
+        return (min(candidates,
+                    key=lambda c: abs(sum(i["fv"] for i in c) - declared_total)),
+                declared_total)
+    # Nothing to reconcile against: prefer the strictest rule that still parses.
+    return candidates[0], None
 
 
 def _parse_ixbrl_number(tag) -> Optional[float]:
@@ -840,7 +928,21 @@ def _compact_dollars(value: float) -> str:
     return f"{sign}${v:.0f}"
 
 
-def _best_ixbrl_metric(soup, contexts: dict, period: str, tag_list: list) -> Optional[dict]:
+def _index_ixbrl_facts(soup) -> dict:
+    """Index every inline-XBRL fact tag by its @name attribute in a single tree
+    traversal. The per-concept lookups below otherwise each call
+    soup.find_all(attrs={"name": tag}), and each of those re-scans the entire
+    document — on a 37MB filing that is ~16s of repeated work. One pass here
+    turns those scans into O(1) dict lookups without changing which tags match."""
+    index = defaultdict(list)
+    for tag in soup.find_all(attrs={"name": True}):
+        name = tag.get("name")
+        if name:
+            index[name].append(tag)
+    return index
+
+
+def _best_ixbrl_metric(facts: dict, contexts: dict, period: str, tag_list: list) -> Optional[dict]:
     """Best fund-level value for any tag in tag_list with a duration context
     ending at the filing period. Prefers earlier-ranked tags, contexts without
     segments (fund-level rather than per-industry), then longer durations
@@ -848,7 +950,7 @@ def _best_ixbrl_metric(soup, contexts: dict, period: str, tag_list: list) -> Opt
     period_year = period[:4] if period else ""
     candidates = []
     for tag_name in tag_list:
-        for tag in soup.find_all(attrs={"name": tag_name}):
+        for tag in facts.get(tag_name, ()):
             value = _parse_ixbrl_number(tag)
             if value is None:
                 continue
@@ -876,13 +978,13 @@ def _best_ixbrl_metric(soup, contexts: dict, period: str, tag_list: list) -> Opt
     return sorted(candidates, key=lambda c: c[:3])[0][3]
 
 
-def _best_ixbrl_instant(soup, contexts: dict, period: str, tag_list: list) -> Optional[float]:
+def _best_ixbrl_instant(facts: dict, contexts: dict, period: str, tag_list: list) -> Optional[float]:
     """Best fund-level instant value at the period end for any tag in tag_list.
     Prefers earlier-ranked tags and contexts without segments (whole-fund
     balance-sheet values rather than share-class or rollforward columns)."""
     candidates = []
     for tag_name in tag_list:
-        for tag in soup.find_all(attrs={"name": tag_name}):
+        for tag in facts.get(tag_name, ()):
             value = _parse_ixbrl_number(tag)
             if value is None:
                 continue
@@ -980,16 +1082,17 @@ def extract_realized_loss_metric(html_text: str, period: str, source: str, soup=
     if soup is None:
         soup = BeautifulSoup(html_text, "lxml")
     contexts = _context_periods(soup)
+    facts = _index_ixbrl_facts(soup)
 
-    net_assets = _best_ixbrl_instant(soup, contexts, period, NET_ASSETS_TAGS)
+    net_assets = _best_ixbrl_instant(facts, contexts, period, NET_ASSETS_TAGS)
     if net_assets and net_assets > 0:
         result["netAssets"] = net_assets
 
-    total_debt = _best_ixbrl_instant(soup, contexts, period, TOTAL_DEBT_TAGS)
+    total_debt = _best_ixbrl_instant(facts, contexts, period, TOTAL_DEBT_TAGS)
     if total_debt and total_debt > 0:
         result["totalDebt"] = total_debt
 
-    best_r = _best_ixbrl_metric(soup, contexts, period, NET_REALIZED_LOSS_TAGS)
+    best_r = _best_ixbrl_metric(facts, contexts, period, NET_REALIZED_LOSS_TAGS)
     if best_r:
         result.update({
             "periodStart":   best_r["start"],
@@ -999,7 +1102,7 @@ def extract_realized_loss_metric(html_text: str, period: str, source: str, soup=
             "dataAvailable": True,
         })
 
-    best_u = _best_ixbrl_metric(soup, contexts, period, NET_UNREALIZED_TAGS)
+    best_u = _best_ixbrl_metric(facts, contexts, period, NET_UNREALIZED_TAGS)
     if best_u:
         result["unrealizedValue"] = best_u["value"]
         result["unrealizedStart"] = best_u["start"]
@@ -1571,13 +1674,29 @@ def _extract_bdc_investments(html_text: str, period: str, soup=None) -> list:
     if not html_text:
         return []
 
-    # Structured inline-XBRL investment facts are authoritative when present:
-    # they are the tagged form of the same schedule the HTML tables render. A
-    # plausible, non-aggregate fact parse lets us skip the far more expensive
-    # HTML section scraping entirely (the hot path for large filers). The fact
-    # parser reuses the shared soup, so this costs no extra document parse.
-    fact_invs = _extract_bdc_investments_from_ixbrl_facts(html_text, period, soup=soup)
-    if (_plausible_portfolio(fact_invs) and not _has_bdc_aggregate_parse_rows(fact_invs)
+    # Structured inline-XBRL investment facts are the tagged form of the same
+    # schedule the HTML tables render, and the filing usually states its own
+    # portfolio total. Where it does, that total — not a heuristic — decides
+    # which source to trust. The fact parser reuses the shared soup, so this
+    # costs no extra document parse.
+    fact_invs, declared_total = _ixbrl_facts_schedule(html_text, period, soup=soup)
+
+    def _misfit(invs) -> Optional[float]:
+        """Relative distance from the fund's own stated portfolio total."""
+        if not declared_total or declared_total <= 0 or not invs:
+            return None
+        return abs(sum(i["fv"] for i in invs) - declared_total) / declared_total
+
+    # Facts that reconcile to the filing's own total are authoritative, and
+    # skipping the far more expensive section scrape is the hot path for large
+    # filers.
+    fact_misfit = _misfit(fact_invs)
+    if (fact_misfit is not None and fact_misfit <= 0.05
+            and not _has_bdc_aggregate_parse_rows(fact_invs)):
+        return fact_invs
+
+    if (declared_total is None and _plausible_portfolio(fact_invs)
+            and not _has_bdc_aggregate_parse_rows(fact_invs)
             and _fact_names_look_valid(fact_invs)):
         return fact_invs
 
@@ -1598,6 +1717,18 @@ def _extract_bdc_investments(html_text: str, period: str, soup=None) -> list:
         if ((_plausible_portfolio(invs), sum(i["fv"] for i in invs), len(invs)) >
             (_plausible_portfolio(best), sum(i["fv"] for i in best), len(best))):
             best = invs
+
+    # With a stated portfolio total, let it referee the two sources rather than
+    # defaulting to either. The section scraper can land on the wrong table and
+    # return wild figures (TCPC $163B, SAR $58B, NSLR $22.8B against stated
+    # totals near $1B), so preferring it blindly is unsafe — and so is trusting
+    # facts that don't reconcile (KBDC's FY25 10-K tags ~2x its own stated
+    # portfolio). Whichever lands closer to what the fund says it owns wins.
+    if declared_total and declared_total > 0:
+        scored = [(m, invs) for invs, m in ((fact_invs, fact_misfit), (best, _misfit(best)))
+                  if m is not None]
+        if scored:
+            return min(scored, key=lambda s: s[0])[1]
 
     # Facts may be present but implausible/aggregate; still let them win over a
     # section parse that captured rollup rows or looks over-counted.
