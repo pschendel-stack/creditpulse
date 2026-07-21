@@ -856,19 +856,26 @@ def _ixbrl_facts_schedule(html_text: str, period: str, soup=None) -> tuple:
     # let the filing's own declared portfolio total pick the closest.
     has_par_shares = lambda v: (v.get("par") or 0) > 0 or (v.get("shares") or 0) > 0
     has_any_detail = lambda v: has_par_shares(v) or (v.get("cost") or 0) > 0
-    candidates = [c for c in (_build(has_par_shares), _build(has_any_detail), _build(None)) if c]
+    strict = _build(has_par_shares)   # principal/shares only (drops cost-only equity)
+    detail = _build(has_any_detail)   # any valuation detail; keeps cost-only equity/warrants
+    loose  = _build(None)             # every non-subtotal fact
 
     # Fund-level totals include per-industry subtotals, so the grand total is the
     # largest of them.
     declared_total = max(declared_totals) if declared_totals else None
-    if not candidates:
-        return [], declared_total
     if declared_total and declared_total > 0:
+        candidates = [c for c in (strict, detail, loose) if c]
+        if not candidates:
+            return [], declared_total
         return (min(candidates,
                     key=lambda c: abs(sum(i["fv"] for i in c) - declared_total)),
                 declared_total)
-    # Nothing to reconcile against: prefer the strictest rule that still parses.
-    return candidates[0], None
+    # No stated total to reconcile against. Keep every position that carries some
+    # valuation detail (principal, shares, or cost): this retains cost-only
+    # equity/warrants while still excluding fair-value-only subtotal rows. The
+    # strict rule alone would silently drop those warrants; the loose rule is the
+    # last resort if nothing carries detail.
+    return (detail or loose or strict, None)
 
 
 def _parse_ixbrl_number(tag) -> Optional[float]:

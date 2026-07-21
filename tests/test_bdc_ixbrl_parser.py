@@ -24,6 +24,29 @@ class BdcIxbrlParserTests(unittest.TestCase):
 
         self.assertEqual(parsed["name"], "Marathon Health, LLC")
 
+    def test_domain_parser_handles_gsbd_reference_rate_and_spread(self):
+        parsed = _parse_bdc_ixbrl_investment_domain(
+            "Investment Debt Investments - 233.2% United States - 220.5% "
+            "1st Lien/Senior Secured Debt - 206.5% QBS Parent, Inc. "
+            "(dba Quorum Software) Industry IT Services Reference Rate and Spread "
+            "S + 4.50% Maturity 06/03/32"
+        )
+
+        self.assertEqual(parsed["name"], "QBS Parent, Inc. (dba Quorum Software)")
+        self.assertIn("Debt Investments", parsed["type"])
+        self.assertIn("1st Lien/Senior Secured Debt", parsed["type"])
+
+    def test_domain_parser_handles_gsbd_equity_with_industry_label(self):
+        parsed = _parse_bdc_ixbrl_investment_domain(
+            "Investment Equity Securities - 2.5% United States - 0.1% Common Stock "
+            "- 0.1% Social Media Holdings, Inc. Industry Interactive Media & Services "
+            "Initial Acquisition Date 05/31/23"
+        )
+
+        self.assertEqual(parsed["name"], "Social Media Holdings, Inc.")
+        self.assertIn("Equity Securities", parsed["type"])
+        self.assertIn("Common Stock", parsed["type"])
+
     def test_extracts_period_facts_and_skips_totals(self):
         html = """
         <html><body>
