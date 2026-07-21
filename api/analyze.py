@@ -570,6 +570,30 @@ def _parse_bdc_ixbrl_investment_domain(domain: str) -> dict:
     raw = re.sub(r'^Investment, Identifier \[Domain\]:\s*', '', raw, flags=re.IGNORECASE)
     raw = re.sub(r'\s*\(\d+\)\s*$', '', raw).strip()
 
+    # GSBD / newer Workiva-style format:
+    #   "Investment Debt Investments - 233.2% United States - 220.5% 1st Lien/
+    #    Senior Secured Debt - 206.5% Borrower, LLC Industry Software Reference
+    #    Rate and Spread S + 5.00% Maturity ..."
+    # The label "Reference Rate and Spread" contains "and"; parse this before
+    # the generic "A and B" branch below or it will call the borrower "Spread ...".
+    if re.match(r'^Investment\s+', raw, re.IGNORECASE) and re.search(r'\bIndustry\b', raw):
+        segments = [p.strip() for p in re.split(r'\s+[-–]\s+', raw) if p.strip()]
+        borrower_segment = next((p for p in reversed(segments) if re.search(r'\bIndustry\b', p)), "")
+        if borrower_segment:
+            borrower_segment = re.sub(r'^\d+(?:\.\d+)?\s*%\s*', '',borrower_segment).strip()
+            bm = re.match(r'(.+?)\s+Industry\b', borrower_segment, re.IGNORECASE)
+            borrower = bm.group(1).strip(" ,-–") if bm else ""
+            if borrower:
+                category = re.sub(r'^Investment\s+', '', segments[0], flags=re.IGNORECASE).strip()
+                descriptor = ""
+                for part in reversed(segments[:-1]):
+                    cleaned = re.sub(r'^\d+(?:\.\d+)?\s*%\s*', '',part).strip()
+                    if IXBRL_SECURITY_DESCRIPTOR_ANY_RE.search(cleaned):
+                        descriptor = cleaned
+                        break
+                itype = " - ".join(p for p in (category, descriptor) if p)
+                return {"name": borrower, "type": itype or "Investment", "raw": raw, "parts": segments}
+
     # Hyphen-delimited format (KBDC and others): levels are separated by " - "
     # instead of commas, e.g.
     #   "Debt Investments - Industry - Borrower, LLC - First lien senior secured loan - Interest Rate ... - Maturity ..."
@@ -1329,13 +1353,19 @@ async def fetch_bdc_filing_full(
         metric = extract_realized_loss_metric(primary_html or "", period, form, soup=primary_soup)
 
         # ── SOI Method 2: parse the same primary document ────────────────────
-        # Runs when Method 1 found nothing OR produced an implausible parse
-        # (e.g. Blue Owl R-files yield garbled rows); keep the better result.
-        if need_soi and primary_html and not _plausible_portfolio(investments):
+        # Runs when Method 1 found nothing, produced an implausible parse (e.g.
+        # Blue Owl R-files yield garbled rows), OR produced plausible marks under
+        # mis-labelled borrowers. GSBD's Schedule-of-Investments R-file renders
+        # real marks but names each row from the pivot's rate column ("Spread
+        # S + 5.75% Maturity ..."); those pass _plausible_portfolio but not
+        # _fact_names_look_valid, so without the name check Method 1's garbage
+        # names would win and the sub-90 borrower list would be unreadable.
+        if need_soi and primary_html and (not _plausible_portfolio(investments)
+                                          or not _fact_names_look_valid(investments)):
             invs2 = _extract_bdc_investments(primary_html, period, soup=primary_soup)
-            # Prefer a plausible parse; row count breaks ties
-            if ((_plausible_portfolio(invs2), len(invs2)) >
-                (_plausible_portfolio(investments), len(investments))):
+            # Prefer a plausible parse, then real-looking names, then row count.
+            if ((_plausible_portfolio(invs2), _fact_names_look_valid(invs2), len(invs2)) >
+                (_plausible_portfolio(investments), _fact_names_look_valid(investments), len(investments))):
                 investments = invs2
 
     return investments, metric
