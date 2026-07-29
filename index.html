@@ -922,7 +922,7 @@ function formatValueMapTimestamp(value) {
 }
 
 async function downloadPDF() {
-  [scoreChartInst, positionScatterChartInst, stressChartInst, nearparChartInst, realizedLossChartInst, cumRealizedChartInst, leverageChartInst]
+  [scoreChartInst, positionScatterChartInst, maturityChartInst, stressChartInst, nearparChartInst, realizedLossChartInst, cumRealizedChartInst, leverageChartInst]
     .filter(Boolean)
     .forEach(chart => chart.update('none'));
   await nextPaint();
@@ -972,7 +972,7 @@ async function downloadPDF() {
 }
 
 // ── RENDER ──────────────────────────────────────────────────────────────────
-let scoreChartInst = null, positionScatterChartInst = null, stressChartInst = null, nearparChartInst = null, realizedLossChartInst = null, cumRealizedChartInst = null, leverageChartInst = null, valueMapChartInst = null;
+let scoreChartInst = null, positionScatterChartInst = null, maturityChartInst = null, stressChartInst = null, nearparChartInst = null, realizedLossChartInst = null, cumRealizedChartInst = null, leverageChartInst = null, valueMapChartInst = null;
 
 function renderResults(d) {
   if (isValueMapRoute() || activePage !== 'analyze') {
@@ -989,6 +989,7 @@ function renderResults(d) {
   const rl   = d.realized_losses;
   const cs   = d.credit_score;
   const ps   = d.position_scatter;
+  const mp   = d.maturity_profile;
   const lev  = d.leverage;
 
   const typeLabel = d.fund_type === 'interval_fund' ? 'Interval Fund' : 'BDC';
@@ -1062,6 +1063,8 @@ function renderResults(d) {
 
   ${renderPositionScatterSection(ps)}
 
+  ${renderMaturitySection(mp)}
+
   <!-- Bucket charts -->
   <div class="bucket-toggle-row no-print">
     <div class="mode-toggle">
@@ -1104,10 +1107,12 @@ function renderResults(d) {
   // Draw bucket charts (percentage view is the default for each new analysis;
   // the re-rendered toggle markup above already has "%" active)
   bucketMode = '%';
+  maturityMode = 'mv';
   renderBucketCharts(b, qtrs);
   renderCreditScoreChart(cs);
   renderLeverageChart(lev);
   renderPositionScatterChart(ps);
+  renderMaturityChart(mp);
   renderRealizedLossChart(rl);
 
   // Render roll-rate
@@ -1813,6 +1818,131 @@ function renderPositionScatterChart(scatter) {
           ticks: { font: { size: 11 }, callback: v => '$' + Number(v).toFixed(0) },
           suggestedMin: Math.max(0, Math.min(...points.map(p => p.y)) - 5),
           suggestedMax: Math.max(...points.map(p => p.y)) + 5,
+        },
+      },
+    },
+  });
+}
+
+// ── MATURITY PROFILE ─────────────────────────────────────────────────────────
+// 'mv' = market-value weighted price (Σ price·value / Σ value);
+// 'par' = par weighted (Σ value / Σ par). Resets to 'mv' on each analysis.
+let maturityMode = 'mv';
+
+function renderMaturitySection(mp) {
+  if (!mp || !mp.available) {
+    const cov = mp && (mp.coverage_pct !== undefined && mp.coverage_pct !== null) ? mp.coverage_pct : 0;
+    return `<div class="section">
+      <div class="section-title">Maturity Profile: Par &amp; Weighted Price</div>
+      <p class="position-note">This filer does not disclose per-loan maturity dates in a form we can parse from its SEC filing${cov ? ` (only ${cov}% of debt fair value carried a parseable maturity)` : ''}, so a maturity-year view is not available for this fund. Funds that tag maturities in their schedule of investments (e.g. GSBD, KBDC) show the full analysis here.</p>
+    </div>`;
+  }
+
+  return `<div class="section">
+    <div class="position-scatter-head">
+      <div class="section-title" style="margin-bottom:0">Maturity Profile: Par &amp; Weighted Price</div>
+      <div class="position-scatter-meta">${mp.quarter || 'latest quarter'} · ${mp.coverage_pct}% of debt FV dated · ${mp.dated_positions} loans</div>
+    </div>
+    <div class="bucket-toggle-row no-print" style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+      <span style="font-size:12px;color:var(--muted)">Price line —</span>
+      <div class="mode-toggle">
+        <button class="mode-btn active" id="matBtnMv" onclick="setMaturityMode('mv')">Market-value weighted</button>
+        <button class="mode-btn" id="matBtnPar" onclick="setMaturityMode('par')">Par weighted (ΣValue/ΣPar)</button>
+      </div>
+    </div>
+    <div class="position-chart-wrap" style="height:340px">
+      <canvas id="maturityChart"></canvas>
+    </div>
+    <p class="position-note">${mp.definition || ''}</p>
+  </div>`;
+}
+
+function setMaturityMode(mode) {
+  maturityMode = mode;
+  const mv  = document.getElementById('matBtnMv');
+  const par = document.getElementById('matBtnPar');
+  if (mv)  mv.classList.toggle('active', mode === 'mv');
+  if (par) par.classList.toggle('active', mode === 'par');
+  if (window._maturityData) renderMaturityChart(window._maturityData);
+}
+
+function renderMaturityChart(mp) {
+  if (maturityChartInst) { maturityChartInst.destroy(); maturityChartInst = null; }
+  if (!mp || !mp.available) return;
+  const canvas = document.getElementById('maturityChart');
+  const items = Array.isArray(mp.items) ? mp.items : [];
+  if (!canvas || !items.length) return;
+  window._maturityData = mp;
+
+  const labels   = items.map(i => i.year);
+  const parData  = items.map(i => i.par_m);
+  const priceKey = maturityMode === 'par' ? 'par_price' : 'mv_price';
+  const price    = items.map(i => i[priceKey]);
+  const priceLbl = maturityMode === 'par' ? 'Par-weighted price' : 'Weighted price';
+
+  const prices = price.filter(v => Number.isFinite(v));
+  const pMin = prices.length ? Math.max(0, Math.floor((Math.min(...prices) - 4) / 5) * 5) : 0;
+  const pMax = prices.length ? Math.ceil((Math.max(...prices) + 4) / 5) * 5 : 105;
+
+  maturityChartInst = new Chart(canvas, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        {
+          type: 'line',
+          label: priceLbl,
+          data: price,
+          // Gold from the stress-zone palette (CHART_COLORS[5]).
+          borderColor: CHART_COLORS[5],
+          backgroundColor: 'rgba(200,155,40,0.10)',
+          fill: false, tension: 0.3, pointRadius: 4, pointHoverRadius: 5,
+          pointBackgroundColor: CHART_COLORS[5], borderWidth: 2,
+          yAxisID: 'price', order: 0,
+        },
+        {
+          type: 'bar',
+          label: 'Par ($M)',
+          data: parData,
+          // Darkest blue from the stress-zone palette (CHART_COLORS[4]).
+          backgroundColor: CHART_COLORS[4],
+          yAxisID: 'par', order: 2, maxBarThickness: 48,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      plugins: {
+        legend: { position: 'top', labels: { boxWidth: 12, font: { size: 12 }, usePointStyle: true } },
+        tooltip: {
+          callbacks: {
+            title: ctx => `Maturity ${ctx[0]?.label || ''}`,
+            label: ctx => ctx.dataset.yAxisID === 'par'
+              ? ` Par: $${Number(ctx.parsed.y).toLocaleString(undefined, {maximumFractionDigits: 0})}M`
+              : ` ${ctx.dataset.label}: ${Number(ctx.parsed.y).toFixed(1)}% of par`,
+          },
+        },
+      },
+      scales: {
+        x: {
+          grid: { display: false },
+          ticks: { font: { size: 12 } },
+        },
+        par: {
+          position: 'left',
+          beginAtZero: true,
+          grid: { color: '#eee' },
+          ticks: { font: { size: 11 }, callback: v => '$' + Number(v).toLocaleString() },
+          title: { display: true, text: 'Aggregate par ($M)', font: { size: 12 } },
+        },
+        price: {
+          position: 'right',
+          min: pMin, max: pMax,
+          grid: { drawOnChartArea: false },
+          ticks: { font: { size: 11 } },
+          title: { display: true, text: 'Weighted price (% of par)', font: { size: 12 } },
         },
       },
     },

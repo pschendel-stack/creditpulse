@@ -208,6 +208,8 @@ async def cache_get(client: httpx.AsyncClient, ticker: str) -> Optional[dict]:
                     return None
                 if (result.get("leverage") or {}).get("version") != 1:
                     return None
+                if (result.get("maturity_profile") or {}).get("version") != 1:
+                    return None
                 return result
     except Exception:
         pass
@@ -843,6 +845,7 @@ def _ixbrl_facts_schedule(html_text: str, period: str, soup=None) -> tuple:
                 "par":      round(denom, 2),
                 "fv":       round(fv, 2),
                 "mark":     round(mark, 2),
+                "maturity": _maturity_year_from_domain(parsed.get("raw", "")),
             })
         return out
 
@@ -1397,6 +1400,35 @@ DATE_ANY_RE  = re.compile(
     re.IGNORECASE,
 )
 
+def _year_from_date(text: str) -> Optional[int]:
+    """Calendar year from a MM/DD/YY[YY], MM/YYYY, or 'Month D, YYYY' date."""
+    if not text:
+        return None
+    m = re.search(r'\b(\d{1,2})/(?:\d{1,2}/)?(\d{2,4})\b', text)
+    if m:
+        y = int(m.group(2))
+        if y < 100:
+            y += 2000
+        if 1990 <= y <= 2100:
+            return y
+    m2 = re.search(MONTH_RE + r'\s+\d{1,2},?\s+(\d{4})', text, re.IGNORECASE)
+    if m2 and 1990 <= int(m2.group(1)) <= 2100:
+        return int(m2.group(1))
+    return None
+
+
+def _maturity_year_from_domain(raw: str) -> Optional[int]:
+    """Maturity year from an InvestmentIdentifierAxis domain string, where it is
+    labelled (GSBD/Apollo/KBDC: '... Maturity 10/01/29', '... Maturity Date
+    04/26/2032'). Anchored on the label so an acquisition date elsewhere in the
+    domain is not mistaken for maturity. Filers that don't label a maturity
+    (OBDC, ARCC) simply yield None, and the maturity view reports N/A."""
+    if not raw:
+        return None
+    m = re.search(r'Maturity(?:\s+Date)?\b(.{0,24})', raw, re.IGNORECASE)
+    return _year_from_date(m.group(1)) if m else None
+
+
 TYPE_KEYWORDS = [
     "first lien", "1st lien", "second lien", "2nd lien", "senior secured",
     "subordinated", "unsecured", "unitranche", "mezzanine", "revolving loan",
@@ -1660,6 +1692,9 @@ def _parse_soi_table(chunk: str, state: dict, mult: float) -> list:
             "par":      round(par_k, 2),
             "fv":       round(fv_k, 2),
             "mark":     round(mark, 2),
+            # mat_idx is the rightmost date cell, already identified as the
+            # maturity column (acquisition dates sort earlier); keep its year.
+            "maturity": _year_from_date(cells[mat_idx]),
         })
 
     return out
@@ -1979,6 +2014,83 @@ def compute_position_scatter(all_data: dict, quarters: list, limit: int = 25) ->
             "share of the latest parsed portfolio fair value."
         ),
     }
+
+_EQUITY_TYPE_RE = re.compile(
+    r'\b(?:common stock|preferred|warrant|membership interest|equity|units?)\b',
+    re.IGNORECASE)
+
+
+def _looks_like_debt(inv: dict) -> bool:
+    """A position that should carry a maturity (i.e. not equity/warrant)."""
+    return not _EQUITY_TYPE_RE.search(inv.get("type", "") or "")
+
+
+def compute_maturity_profile(all_data: dict, quarters: list) -> dict:
+    """Maturity-year profile of the latest parsed portfolio: aggregate par per
+    year plus two weighted prices (market-value weighted and par weighted).
+
+    Only debt positions carry a maturity, so equity is excluded. Coverage is the
+    share of debt fair value that actually carries a parsed maturity; filers that
+    don't disclose maturity in the XBRL domain or SOI table (OBDC, ARCC) land
+    near zero and the view is flagged unavailable so the UI shows N/A rather than
+    a misleading partial maturity wall.
+    """
+    latest_q = quarters[-1] if quarters else ""
+    invs = all_data.get(latest_q, [])
+
+    debt = [i for i in invs if _looks_like_debt(i) and (i.get("fv", 0) or 0) > 0]
+    debt_fv = sum(i["fv"] for i in debt)
+    dated = [i for i in debt if i.get("maturity")]
+    coverage = (sum(i["fv"] for i in dated) / debt_fv) if debt_fv > 0 else 0.0
+
+    buckets = defaultdict(lambda: {"par": 0.0, "fv": 0.0, "mark_fv": 0.0})
+    for i in dated:
+        year = i["maturity"]
+        par = i.get("par", 0) or 0
+        fv = i["fv"]
+        mark = i.get("mark")
+        if par <= 0 or mark is None:
+            continue
+        b = buckets[year]
+        b["par"]     += par
+        b["fv"]      += fv
+        b["mark_fv"] += mark * fv
+
+    items = []
+    for year in sorted(buckets):
+        b = buckets[year]
+        if b["fv"] <= 0 or b["par"] <= 0:
+            continue
+        items.append({
+            "year":      year,
+            "par_m":     round(b["par"] / 1000, 2),   # $K → $M
+            "fv_m":      round(b["fv"] / 1000, 2),
+            # Market-value weighted: Σ(price·value)/Σvalue.
+            "mv_price":  round(b["mark_fv"] / b["fv"], 2),
+            # Par weighted (ΣValue/ΣPar): total fair value over total par.
+            "par_price": round(b["fv"] / b["par"] * 100, 2),
+        })
+
+    # Need a real maturity ladder to be meaningful: most debt dated, ≥2 years.
+    available = coverage >= 0.6 and len(items) >= 2
+
+    return {
+        "version": 1,
+        "available": available,
+        "quarter": latest_q,
+        "coverage_pct": round(coverage * 100, 1),
+        "dated_positions": len(dated),
+        "debt_positions": len(debt),
+        "items": items,
+        "definition": (
+            "Aggregate par by scheduled maturity year for the latest parsed "
+            "filing, with the fair-value-weighted price (Σ price·value / Σ value) "
+            "and the par-weighted price (Σ value / Σ par). Equity positions carry "
+            "no maturity and are excluded. Shown only when the filing discloses "
+            "maturities for most of the debt portfolio."
+        ),
+    }
+
 
 def compute_summary(all_data: dict, quarters: list) -> dict:
     latest_q = quarters[-1] if quarters else ""
@@ -2600,6 +2712,7 @@ async def analyze(
         rollrate   = compute_rollrate(all_data, quarters)
         stress_pos = compute_stress_positions(all_data, quarters)
         position_scatter = compute_position_scatter(all_data, quarters)
+        maturity_profile = compute_maturity_profile(all_data, quarters)
         realized_loss_rows = calculate_quarterly_realized_losses(realized_loss_metrics)
         if fund_type != "interval_fund":
             realized_loss_rows = [r for r in realized_loss_rows
@@ -2662,6 +2775,7 @@ async def analyze(
             "rollrate":         rollrate,
             "stress_positions": stress_pos,
             "position_scatter":  position_scatter,
+            "maturity_profile":  maturity_profile,
             "realized_losses":   realized_losses,
             "credit_score":      credit_score,
             "leverage":          leverage,
