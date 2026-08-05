@@ -1,9 +1,9 @@
 """
 BDC / Interval Fund Analyzer — Vercel serverless API
-GET /api/analyze?ticker=CCFLX[&refresh=true]
+GET /api/analyze?ticker=CCLFX[&refresh=true]
 
 Supports:
-  - Interval funds (NPORT-P filings): CCFLX, CLOA, etc.
+  - Interval funds (NPORT-P filings): CCLFX, CRDIX, etc.
   - BDCs (10-K / 10-Q filings): ARCC, GSBD, ORCC, etc.
 
 Returns structured JSON with bucket analysis, roll-rate matrices, and stressed positions.
@@ -17,13 +17,26 @@ from typing import Optional
 import xml.etree.ElementTree as ET
 
 import httpx
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from mangum import Mangum
 from lxml import etree
 from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 import warnings
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
+
+# BDC Value Map subsystem (peer-relative valuation of the public BDC universe).
+from api.bdc_universe import active_bdc_universe
+from api.bdc_value_map import (
+    apply_market_data_to_snapshot,
+    fetch_sec_company_facts_market_metrics,
+    load_latest_snapshots,
+    load_value_map_response,
+    save_value_snapshot,
+    snapshot_store_configured,
+    value_map_snapshot_from_analysis,
+)
+from api.market_data import get_market_data_provider
 
 # ─── APP ───────────────────────────────────────────────────────────────────────
 
@@ -36,7 +49,16 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 # the analyzer skips cache reads/writes and fetches fresh SEC data.
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
-CACHE_TTL_DAYS = 7
+# 30-day cache: each ticker recomputes at most monthly, minimizing the
+# expensive (60-180s) uncached SEC analyses that drive serverless CPU usage.
+CACHE_TTL_DAYS = 30
+
+# BDC Value Map: dated valuation snapshots live in their own Supabase table; the
+# public read route serves them, refresh routes (secret-gated on Vercel) write.
+BDC_VALUE_SNAPSHOT_TABLE = os.environ.get("BDC_VALUE_SNAPSHOT_TABLE", "bdc_value_snapshots")
+BDC_REFRESH_SECRET = os.environ.get("BDC_REFRESH_SECRET", "")
+BDC_VALUE_PUBLIC_REFRESH = os.environ.get("BDC_VALUE_PUBLIC_REFRESH", "").lower() in {"1", "true", "yes"}
+CRON_SECRET = os.environ.get("CRON_SECRET", "")
 
 EDGAR_UA = {"User-Agent": "BDC Analyzer pschendel@gmail.com"}
 DATA_UA  = {"User-Agent": "BDC Analyzer pschendel@gmail.com", "Accept": "application/json"}
@@ -125,6 +147,9 @@ INTERVAL_TICKER_CIK = {
     "FCRIX": "0001688897",
     "FCREX": "0001688897",
     "BMACX": "0002032432",
+    # Newly public BDC; EDGAR company search doesn't resolve the ticker yet.
+    "LIEN":  "0001843162",  # Chicago Atlantic BDC, Inc.
+    "OFLEX": "0002028436",  # T. Rowe Price OHA Flexible Credit Income Fund (interval fund, NPORT-P)
 }
 
 # ─── UTILITY ───────────────────────────────────────────────────────────────────
@@ -155,13 +180,6 @@ def period_to_label(period: str) -> str:
     except Exception:
         return period
 
-def is_quarter_end(date_str: str) -> bool:
-    try:
-        dt = datetime.strptime(date_str, "%Y-%m-%d")
-        return dt.month in (3, 6, 9, 12)
-    except Exception:
-        return False
-
 # ─── SUPABASE CACHE ────────────────────────────────────────────────────────────
 
 async def cache_get(client: httpx.AsyncClient, ticker: str) -> Optional[dict]:
@@ -190,6 +208,8 @@ async def cache_get(client: httpx.AsyncClient, ticker: str) -> Optional[dict]:
                     return None
                 if (result.get("leverage") or {}).get("version") != 1:
                     return None
+                if (result.get("maturity_profile") or {}).get("version") != 1:
+                    return None
                 return result
     except Exception:
         pass
@@ -199,24 +219,17 @@ async def cache_set(client: httpx.AsyncClient, ticker: str, result: dict):
     if not SUPABASE_URL or not SUPABASE_KEY:
         return
     try:
+        # Write only the columns the app actually reads back (cache_get selects
+        # result_json + computed_at). The full payload lives in result_json, so
+        # adding new result fields never requires a table migration — this is
+        # what previously broke caching (a POSTed column absent from the table
+        # 400s the whole write). ticker is the PK; all other columns are nullable.
         await client.post(
             f"{SUPABASE_URL}/rest/v1/analysis_cache",
             json={
                 "ticker": ticker,
-                "cik": result.get("cik", ""),
-                "fund_name": result.get("fund_name", ""),
-                "fund_type": result.get("fund_type", ""),
-                "quarters": result.get("quarters", []),
-                "summary": result.get("summary", {}),
-                "buckets": result.get("buckets", {}),
-                "rollrate": result.get("rollrate", {}),
-                "stress_pos": result.get("stress_positions", []),
-                "realized_losses": result.get("realized_losses", {}),
-                "credit_score": result.get("credit_score", {}),
-                "position_scatter": result.get("position_scatter", {}),
                 "result_json": result,
                 "computed_at": datetime.now(timezone.utc).isoformat(),
-                "error": None,
             },
             headers={
                 "apikey": SUPABASE_KEY,
@@ -482,9 +495,395 @@ def _plausible_portfolio(invs: list) -> bool:
     return near_par / total >= 0.6
 
 
+def _has_bdc_aggregate_parse_rows(invs: list) -> bool:
+    """Detect SOI parses that accidentally captured rollup rows as positions."""
+    aggregate_patterns = (
+        r'^investments?\s*(?:\(|$)',
+        r'^investments?\s+(?:before|after|in)\b',
+        r'^investment\s+fund\s+after\b',
+        r'^cash\s*&\s*cash\s+equivalents\b',
+        r'^total\s+(?:assets|investments|portfolio)\b',
+    )
+    for inv in invs[:25]:
+        name = re.sub(r'\s+', ' ', inv.get("name", "")).strip().lower()
+        if any(re.search(p, name, re.IGNORECASE) for p in aggregate_patterns):
+            return True
+    return False
+
+
+def _fact_names_look_valid(invs: list) -> bool:
+    """True if a fact parse's names look like real borrowers, not raw security
+    descriptors.
+
+    Some filers (e.g. GSBD's pre-2025 format) structure the
+    InvestmentIdentifierAxis domain so the name extractor yields the rate/date
+    descriptor ('Spread S + 6.50% Maturity 07/01/27') instead of the borrower.
+    When that happens the fact parse is plausible-looking but wrong, so the
+    HTML section scraper must still run as a cross-check rather than being
+    skipped. Names are considered descriptor-like when they begin with
+    'Spread'/'Coupon', mention 'Maturity', or lack an alphabetic word.
+    """
+    if not invs:
+        return False
+    bad = 0
+    for inv in invs:
+        name = re.sub(r'\s+', ' ', inv.get("name", "")).strip()
+        if (re.match(r'(?i)^(?:spread|coupon)\b', name) or
+                re.search(r'(?i)\bmaturity\b', name) or
+                not re.search(r'[A-Za-z]{3}', name)):
+            bad += 1
+    return bad / len(invs) < 0.2
+
+
+IXBRL_BDC_INVESTMENT_TAGS = {
+    "fv": "us-gaap:InvestmentOwnedAtFairValue",
+    "cost": "us-gaap:InvestmentOwnedAtCost",
+    "par": "us-gaap:InvestmentOwnedBalancePrincipalAmount",
+    "shares": "us-gaap:InvestmentOwnedBalanceShares",
+}
+
+IXBRL_BDC_INVESTMENT_TAG_TO_KEY = {v: k for k, v in IXBRL_BDC_INVESTMENT_TAGS.items()}
+
+IXBRL_SECURITY_DESCRIPTOR_RE = re.compile(
+    r'^(?:senior secured|senior unsecured|subordinated|unsecured|term loan|'
+    r'revolving|delayed draw|first lien|second lien|1st lien|2nd lien|'
+    r'common stock|preferred stock|warrant|membership interest|equity|loan|note|other)\b',
+    re.IGNORECASE,
+)
+
+IXBRL_SECURITY_DESCRIPTOR_ANY_RE = re.compile(
+    r'\b(?:senior secured|senior unsecured|subordinated|unsecured|term loan|'
+    r'revolving|delayed draw|first lien|second lien|1st lien|2nd lien|'
+    r'common stock|preferred stock|warrant|membership interest|equity|loan|note|other)\b',
+    re.IGNORECASE,
+)
+
+
+def _parse_bdc_ixbrl_investment_domain(domain: str) -> dict:
+    """Parse InvestmentIdentifierAxis text into a borrower name and type.
+
+    HTGC-style schedules expose investment rows as inline-XBRL facts instead
+    of ordinary row-oriented tables. The typed member usually looks like:
+    "Debt Investments, Industry, Borrower, Senior Secured, May 2028, ...".
+    Borrower names can contain commas (", Inc."), so collect name fragments
+    until a security descriptor starts.
+    """
+    raw = re.sub(r'\s+', ' ', domain or '').strip()
+    raw = re.sub(r'^Investment, Identifier \[Domain\]:\s*', '', raw, flags=re.IGNORECASE)
+    raw = re.sub(r'\s*\(\d+\)\s*$', '', raw).strip()
+
+    # GSBD / newer Workiva-style format:
+    #   "Investment Debt Investments - 233.2% United States - 220.5% 1st Lien/
+    #    Senior Secured Debt - 206.5% Borrower, LLC Industry Software Reference
+    #    Rate and Spread S + 5.00% Maturity ..."
+    # The label "Reference Rate and Spread" contains "and"; parse this before
+    # the generic "A and B" branch below or it will call the borrower "Spread ...".
+    if re.match(r'^Investment\s+', raw, re.IGNORECASE) and re.search(r'\bIndustry\b', raw):
+        segments = [p.strip() for p in re.split(r'\s+[-–]\s+', raw) if p.strip()]
+        borrower_segment = next((p for p in reversed(segments) if re.search(r'\bIndustry\b', p)), "")
+        if borrower_segment:
+            borrower_segment = re.sub(r'^\d+(?:\.\d+)?\s*%\s*', '',borrower_segment).strip()
+            bm = re.match(r'(.+?)\s+Industry\b', borrower_segment, re.IGNORECASE)
+            borrower = bm.group(1).strip(" ,-–") if bm else ""
+            if borrower:
+                category = re.sub(r'^Investment\s+', '', segments[0], flags=re.IGNORECASE).strip()
+                descriptor = ""
+                for part in reversed(segments[:-1]):
+                    cleaned = re.sub(r'^\d+(?:\.\d+)?\s*%\s*', '',part).strip()
+                    if IXBRL_SECURITY_DESCRIPTOR_ANY_RE.search(cleaned):
+                        descriptor = cleaned
+                        break
+                itype = " - ".join(p for p in (category, descriptor) if p)
+                return {"name": borrower, "type": itype or "Investment", "raw": raw, "parts": segments}
+
+    # Hyphen-delimited format (KBDC and others): levels are separated by " - "
+    # instead of commas, e.g.
+    #   "Debt Investments - Industry - Borrower, LLC - First lien senior secured loan - Interest Rate ... - Maturity ..."
+    # Comma-splitting collapses this into a name that begins with the category,
+    # which the aggregate filter then discards (dropping most positions). Detect
+    # it when hyphens are the dominant delimiter and pull the borrower from
+    # between the industry level and the security descriptor.
+    comma_parts = [p for p in raw.split(',') if p.strip()]
+    hyphen_parts = [p.strip() for p in re.split(r'\s+[-–]\s+', raw) if p.strip()]
+    if (len(hyphen_parts) >= 3 and len(hyphen_parts) > len(comma_parts) and
+            re.match(r'^(?:debt|equity|warrant|preferred|common|investment fund)\s+investments?\b',
+                     hyphen_parts[0], re.IGNORECASE)):
+        start = 2  # skip category [0] and industry [1]
+        if len(hyphen_parts) > start and hyphen_parts[start].lower() == "other":
+            start += 1
+        boundary = re.compile(r'^(?:interest rate|reference rate|spread|coupon|acquisition date|'
+                              r'maturity|par\b|shares|units|class\b|series\b)', re.IGNORECASE)
+        name_parts, rest = [], []
+        for idx in range(start, len(hyphen_parts)):
+            part = hyphen_parts[idx]
+            if IXBRL_SECURITY_DESCRIPTOR_RE.search(part) or boundary.match(part):
+                rest = hyphen_parts[idx:]
+                break
+            name_parts.append(part)
+        borrower = ' - '.join(name_parts).strip() or (hyphen_parts[start] if len(hyphen_parts) > start else raw)
+        itype = ' - '.join([hyphen_parts[0]] + rest[:2]) if rest else hyphen_parts[0]
+        return {"name": borrower, "type": itype, "raw": raw, "parts": hyphen_parts}
+
+    # Inline-label format (Apollo Debt Solutions and peers): the schedule packs
+    # everything into one string with keyword labels instead of delimiters, e.g.
+    #   "<Industry> <Short> <Legal Name> Investment Type <descriptor> Interest Rate <rate> Maturity Date <date>"
+    # or equity: "<Industry> <Legal Name> Security Type Common Equity - Stock".
+    # Comma/hyphen splitting can't see those boundaries, so the descriptor —
+    # including "Maturity Date ..." — leaks into the borrower name; the whole
+    # fact parse is then discarded by the "looks like a descriptor" guard.
+    # Cut the name at the first inline label or security descriptor. HTGC/KBDC
+    # comma/hyphen formats begin with a "Debt/Equity Investments" category and
+    # are handled above, so they never reach this branch.
+    label_re = re.compile(
+        r'\b(?:Investment Type|Security Type|Interest Rate|Reference Rate|Maturity Date)\b',
+        re.IGNORECASE)
+    has_type_label = re.search(r'\b(?:Investment|Security) Type\b', raw, re.IGNORECASE)
+    has_rate_and_maturity = (re.search(r'\bInterest Rate\b', raw, re.IGNORECASE) and
+                             re.search(r'\bMaturity Date\b', raw, re.IGNORECASE))
+    starts_with_category = re.match(
+        r'^(?:debt|equity|warrant|preferred|common|investment fund)\s+investments?\b',
+        raw, re.IGNORECASE)
+    if (has_type_label or has_rate_and_maturity) and not starts_with_category:
+        cut = len(raw)
+        lm = label_re.search(raw)
+        if lm:
+            cut = min(cut, lm.start())
+        dm = IXBRL_SECURITY_DESCRIPTOR_ANY_RE.search(raw)
+        if dm:
+            cut = min(cut, dm.start())
+        head = raw[:cut].strip(" ,-–")
+        tail = raw[cut:].strip()
+        if head:
+            itype = re.sub(r'^(?:Investment Type|Security Type)\s*', '', tail, flags=re.IGNORECASE)
+            tm = re.search(r'\b(?:Interest Rate|Reference Rate|Maturity Date)\b', itype, re.IGNORECASE)
+            if tm:
+                itype = itype[:tm.start()]
+            itype = itype.strip(" ,-–")
+            return {"name": head, "type": itype or "Investment", "raw": raw, "parts": [head]}
+
+    if re.search(r'\s+and\s+', raw, re.IGNORECASE):
+        prefix, after_and = re.split(r'\s+and\s+', raw, maxsplit=1, flags=re.IGNORECASE)
+        name_parts = []
+        rest = []
+        for part in [p.strip() for p in after_and.split(',') if p.strip()]:
+            descriptor_m = IXBRL_SECURITY_DESCRIPTOR_ANY_RE.search(part)
+            if descriptor_m:
+                borrower_part = part[:descriptor_m.start()].strip()
+                if borrower_part:
+                    name_parts.append(borrower_part)
+                rest = [part[descriptor_m.start():].strip()]
+                break
+            if re.search(r'\bmaturity\s+date\b', part, re.IGNORECASE):
+                rest = [part]
+                break
+            name_parts.append(part)
+        category_m = re.match(r'^((?:debt|equity|warrant|preferred|common|investment fund)\s+investments?)\b',
+                              prefix, re.IGNORECASE)
+        category = category_m.group(1) if category_m else prefix.strip()
+        borrower = ', '.join(name_parts).strip() or after_and.strip()
+        borrower = re.sub(r'\s+and$', '', borrower, flags=re.IGNORECASE).strip()
+        itype = ', '.join([category] + rest[:2]) if rest else category
+        parts = [p.strip() for p in raw.split(',') if p.strip()]
+        return {"name": borrower, "type": itype, "raw": raw, "parts": parts}
+
+    parts = [p.strip() for p in raw.split(',') if p.strip()]
+    while parts and re.match(r'^\(\d+\)$', parts[-1]):
+        parts.pop()
+
+    category = parts[0] if parts else "Investment"
+    start = 2 if len(parts) >= 3 and re.search(r'investments?|warrants?|debt|equity|preferred|common',
+                                                category, re.IGNORECASE) else 0
+    if len(parts) > start + 1 and parts[start].lower() == "other":
+        start += 1
+
+    name_parts = []
+    rest = []
+    for idx in range(start, len(parts)):
+        part = parts[idx]
+        if IXBRL_SECURITY_DESCRIPTOR_RE.search(part):
+            rest = parts[idx:]
+            break
+        name_parts.append(part)
+
+    borrower = ', '.join(name_parts).strip()
+    borrower = re.sub(r'\s+and$', '', borrower, flags=re.IGNORECASE).strip()
+    if not borrower and len(parts) > start:
+        borrower = parts[start]
+    if not borrower:
+        borrower = raw or "Unknown"
+
+    itype = ', '.join([category] + rest[:2]) if rest else category
+    return {"name": borrower, "type": itype, "raw": raw, "parts": parts}
+
+
+def _is_bdc_ixbrl_aggregate_domain(parsed: dict) -> bool:
+    raw = re.sub(r'\s+', ' ', parsed.get("raw", "")).strip()
+    name = re.sub(r'\s+', ' ', parsed.get("name", "")).strip()
+    if not raw:
+        return True
+    if re.search(r'\b(?:total|subtotal)\b', raw, re.IGNORECASE):
+        return True
+    if re.match(r'^(?:investments?|investment fund)(?:\s|\(|$)', name, re.IGNORECASE):
+        return True
+    if re.match(r'^(?:debt|equity|warrant)\s+investments?\b', name, re.IGNORECASE):
+        return True
+    if name.lower() in {"senior secured", "senior unsecured", "unsecured", "subordinated", "llc", "llc.", "inc", "inc."}:
+        return True
+    if re.search(r'\([\d.]+\s*%\)\s*$', raw) and not IXBRL_SECURITY_DESCRIPTOR_RE.search(raw):
+        return True
+    return False
+
+
+def _extract_bdc_investments_from_ixbrl_facts(html_text: str, period: str, soup=None) -> list:
+    """Investments only; see _ixbrl_facts_schedule."""
+    return _ixbrl_facts_schedule(html_text, period, soup=soup)[0]
+
+
+def _ixbrl_facts_schedule(html_text: str, period: str, soup=None) -> tuple:
+    """Parse the Schedule of Investments from inline-XBRL investment facts.
+
+    Returns (investments, declared_total) where `declared_total` is the filing's
+    own fund-level portfolio fair value in $K, or None when the filing doesn't
+    state one. The caller uses it to decide whether these facts or the HTML
+    section scrape better reconcile to what the fund says it owns.
+
+    Some BDCs, including HTGC, publish Schedule of Investments R-files as
+    dimensional XBRL facts rather than normal borrower rows. We group facts by
+    context, require the filing-period InvestmentIdentifierAxis, and exclude
+    contexts that are subtotal/total rows embedded in the schedule.
+
+    `soup` may be a pre-parsed BeautifulSoup of html_text (shared with the
+    metric extraction) to avoid re-parsing large primary documents.
+    """
+    if "InvestmentOwnedAtFairValue" not in html_text or "InvestmentIdentifierAxis" not in html_text:
+        return [], None
+
+    if soup is None:
+        soup = BeautifulSoup(html_text, "lxml")
+    contexts = {}
+    period_no_axis = set()
+    for ctx in soup.find_all(re.compile(r'(?:^|:)context$', re.IGNORECASE)):
+        cid = ctx.get("id")
+        if not cid:
+            continue
+        instant = ctx.find(re.compile(r'(?:^|:)instant$', re.IGNORECASE))
+        end_date = ctx.find(re.compile(r'(?:^|:)enddate$', re.IGNORECASE))
+        ctx_period = (instant or end_date).get_text(strip=True) if (instant or end_date) else None
+        if ctx_period != period:
+            continue
+
+        investment_domain = None
+        for member in ctx.find_all(re.compile(r'(?:typedmember|typedMember)$', re.IGNORECASE)):
+            if "InvestmentIdentifierAxis" in (member.get("dimension") or ""):
+                investment_domain = member.get_text(" ", strip=True)
+                break
+        if investment_domain:
+            contexts[cid] = investment_domain
+        else:
+            period_no_axis.add(cid)
+
+    if not contexts:
+        return [], None
+
+    facts = defaultdict(dict)
+    declared_totals = []
+    for tag in soup.find_all(re.compile(r'(?:nonfraction|nonnumeric)$', re.IGNORECASE)):
+        fact_name = tag.get("name")
+        key = IXBRL_BDC_INVESTMENT_TAG_TO_KEY.get(fact_name)
+        if not key:
+            continue
+        context_ref = tag.get("contextref") or tag.get("contextRef")
+        # Fund-level (no per-investment axis) fair value: the filing's own
+        # statement of what the portfolio is worth. Used below to referee the
+        # subtotal rules.
+        if context_ref in period_no_axis:
+            if key == "fv":
+                val = _parse_ixbrl_number(tag)
+                if val is not None and val > 0:
+                    declared_totals.append(val / 1000.0)
+            continue
+        if context_ref not in contexts:
+            continue
+        val = _parse_ixbrl_number(tag)
+        if val is None:
+            continue
+        # Convert inline-XBRL dollars to the app's BDC convention: $K.
+        val_k = val / 1000.0
+        if key not in facts[context_ref] or abs(val_k) > abs(facts[context_ref][key]):
+            facts[context_ref][key] = val_k
+
+    def _build(detail_ok) -> list:
+        """Assemble the schedule, keeping only facts `detail_ok` accepts."""
+        out = []
+        for context_ref, vals in facts.items():
+            fv = vals.get("fv")
+            if fv is None or fv <= 0:
+                continue
+            if detail_ok is not None and not detail_ok(vals):
+                continue
+
+            parsed = _parse_bdc_ixbrl_investment_domain(contexts[context_ref])
+            parts = parsed["parts"]
+            if (_is_bdc_ixbrl_aggregate_domain(parsed) or
+                    re.match(r'^(?:total|subtotal)\b', parsed["name"], re.IGNORECASE) or
+                    any(re.match(r'^(?:total|subtotal)\b', p, re.IGNORECASE) for p in parts)):
+                continue
+
+            par = vals.get("par")
+            cost = vals.get("cost")
+            denom = par if (par and par > 0) else cost if (cost and cost > 0) else fv
+            if denom <= 0:
+                continue
+            mark = fv / denom * 100
+            if mark <= 0 or mark > 20000:
+                continue
+
+            out.append({
+                "name":     parsed["name"],
+                "type":     parsed["type"],
+                "currency": "USD",
+                "par":      round(denom, 2),
+                "fv":       round(fv, 2),
+                "mark":     round(mark, 2),
+                "maturity": _maturity_year_from_domain(parsed.get("raw", "")),
+            })
+        return out
+
+    # Filers tag subtotal rows (industry rollups, company totals over their own
+    # tranches) on the same InvestmentIdentifierAxis as real positions, which
+    # inflates the portfolio badly: ARCC $29.5B→$34.4B, OBDC $15.3B→$18.4B,
+    # Apollo's pre-2025Q2 format 2.6x. Real positions carry valuation detail, but
+    # WHICH detail varies by filer — ARCC tags LLC/LP member interests with cost
+    # and no principal/shares, while Apollo's old format tags its subtotals *with*
+    # cost. No single rule fits every filer, so build the schedule under each and
+    # let the filing's own declared portfolio total pick the closest.
+    has_par_shares = lambda v: (v.get("par") or 0) > 0 or (v.get("shares") or 0) > 0
+    has_any_detail = lambda v: has_par_shares(v) or (v.get("cost") or 0) > 0
+    strict = _build(has_par_shares)   # principal/shares only (drops cost-only equity)
+    detail = _build(has_any_detail)   # any valuation detail; keeps cost-only equity/warrants
+    loose  = _build(None)             # every non-subtotal fact
+
+    # Fund-level totals include per-industry subtotals, so the grand total is the
+    # largest of them.
+    declared_total = max(declared_totals) if declared_totals else None
+    if declared_total and declared_total > 0:
+        candidates = [c for c in (strict, detail, loose) if c]
+        if not candidates:
+            return [], declared_total
+        return (min(candidates,
+                    key=lambda c: abs(sum(i["fv"] for i in c) - declared_total)),
+                declared_total)
+    # No stated total to reconcile against. Keep every position that carries some
+    # valuation detail (principal, shares, or cost): this retains cost-only
+    # equity/warrants while still excluding fair-value-only subtotal rows. The
+    # strict rule alone would silently drop those warrants; the loose rule is the
+    # last resort if nothing carries detail.
+    return (detail or loose or strict, None)
+
+
 def _parse_ixbrl_number(tag) -> Optional[float]:
     txt = tag.get_text("", strip=True)
-    txt = txt.replace("\u2014", "").replace("\u2013", "").replace("—", "").replace("–", "")
+    txt = txt.replace("—", "").replace("–", "").replace("—", "").replace("–", "")
     txt = txt.replace("$", "").replace(",", "").strip()
     if not txt:
         return None
@@ -563,7 +962,21 @@ def _compact_dollars(value: float) -> str:
     return f"{sign}${v:.0f}"
 
 
-def _best_ixbrl_metric(soup, contexts: dict, period: str, tag_list: list) -> Optional[dict]:
+def _index_ixbrl_facts(soup) -> dict:
+    """Index every inline-XBRL fact tag by its @name attribute in a single tree
+    traversal. The per-concept lookups below otherwise each call
+    soup.find_all(attrs={"name": tag}), and each of those re-scans the entire
+    document — on a 37MB filing that is ~16s of repeated work. One pass here
+    turns those scans into O(1) dict lookups without changing which tags match."""
+    index = defaultdict(list)
+    for tag in soup.find_all(attrs={"name": True}):
+        name = tag.get("name")
+        if name:
+            index[name].append(tag)
+    return index
+
+
+def _best_ixbrl_metric(facts: dict, contexts: dict, period: str, tag_list: list) -> Optional[dict]:
     """Best fund-level value for any tag in tag_list with a duration context
     ending at the filing period. Prefers earlier-ranked tags, contexts without
     segments (fund-level rather than per-industry), then longer durations
@@ -571,7 +984,7 @@ def _best_ixbrl_metric(soup, contexts: dict, period: str, tag_list: list) -> Opt
     period_year = period[:4] if period else ""
     candidates = []
     for tag_name in tag_list:
-        for tag in soup.find_all(attrs={"name": tag_name}):
+        for tag in facts.get(tag_name, ()):
             value = _parse_ixbrl_number(tag)
             if value is None:
                 continue
@@ -599,13 +1012,13 @@ def _best_ixbrl_metric(soup, contexts: dict, period: str, tag_list: list) -> Opt
     return sorted(candidates, key=lambda c: c[:3])[0][3]
 
 
-def _best_ixbrl_instant(soup, contexts: dict, period: str, tag_list: list) -> Optional[float]:
+def _best_ixbrl_instant(facts: dict, contexts: dict, period: str, tag_list: list) -> Optional[float]:
     """Best fund-level instant value at the period end for any tag in tag_list.
     Prefers earlier-ranked tags and contexts without segments (whole-fund
     balance-sheet values rather than share-class or rollforward columns)."""
     candidates = []
     for tag_name in tag_list:
-        for tag in soup.find_all(attrs={"name": tag_name}):
+        for tag in facts.get(tag_name, ()):
             value = _parse_ixbrl_number(tag)
             if value is None:
                 continue
@@ -621,20 +1034,6 @@ def _best_ixbrl_instant(soup, contexts: dict, period: str, tag_list: list) -> Op
     if not candidates:
         return None
     return sorted(candidates, key=lambda c: c[:2])[0][2]
-
-
-def parse_nport_net_assets(xml_text: str) -> Optional[float]:
-    """Fund-level net assets from an NPORT-P primary_doc.xml."""
-    if not xml_text:
-        return None
-    m = re.search(r'<netAssets>\s*(-?[\d.]+)\s*</netAssets>', xml_text)
-    if not m:
-        return None
-    try:
-        value = float(m.group(1))
-        return value if value > 0 else None
-    except ValueError:
-        return None
 
 
 # NPORT-P Part B Item B.4: amounts payable for borrowings, split by tenor
@@ -685,13 +1084,16 @@ def parse_nport_fund_level(xml_text: str) -> dict:
     return out
 
 
-def extract_realized_loss_metric(html_text: str, period: str, source: str) -> dict:
+def extract_realized_loss_metric(html_text: str, period: str, source: str, soup=None) -> dict:
     """Extract filing-level realized and unrealized gain/loss metrics from
     inline XBRL (the statement of operations).
 
     The SEC tags represent net signed values. Quarterly display logic later
     de-cumulates YTD figures and converts negative realized values into
     positive realized-loss bars; the unrealized net change stays signed.
+
+    `soup` may be a pre-parsed BeautifulSoup of html_text (shared with the
+    Schedule-of-Investments fact parser) to avoid re-parsing large documents.
     """
     result = {
         "periodEnd": period,
@@ -711,18 +1113,20 @@ def extract_realized_loss_metric(html_text: str, period: str, source: str) -> di
     if not html_text:
         return result
 
-    soup = BeautifulSoup(html_text, "lxml")
+    if soup is None:
+        soup = BeautifulSoup(html_text, "lxml")
     contexts = _context_periods(soup)
+    facts = _index_ixbrl_facts(soup)
 
-    net_assets = _best_ixbrl_instant(soup, contexts, period, NET_ASSETS_TAGS)
+    net_assets = _best_ixbrl_instant(facts, contexts, period, NET_ASSETS_TAGS)
     if net_assets and net_assets > 0:
         result["netAssets"] = net_assets
 
-    total_debt = _best_ixbrl_instant(soup, contexts, period, TOTAL_DEBT_TAGS)
+    total_debt = _best_ixbrl_instant(facts, contexts, period, TOTAL_DEBT_TAGS)
     if total_debt and total_debt > 0:
         result["totalDebt"] = total_debt
 
-    best_r = _best_ixbrl_metric(soup, contexts, period, NET_REALIZED_LOSS_TAGS)
+    best_r = _best_ixbrl_metric(facts, contexts, period, NET_REALIZED_LOSS_TAGS)
     if best_r:
         result.update({
             "periodStart":   best_r["start"],
@@ -732,7 +1136,7 @@ def extract_realized_loss_metric(html_text: str, period: str, source: str) -> di
             "dataAvailable": True,
         })
 
-    best_u = _best_ixbrl_metric(soup, contexts, period, NET_UNREALIZED_TAGS)
+    best_u = _best_ixbrl_metric(facts, contexts, period, NET_UNREALIZED_TAGS)
     if best_u:
         result["unrealizedValue"] = best_u["value"]
         result["unrealizedStart"] = best_u["start"]
@@ -841,9 +1245,6 @@ def calculate_quarterly_realized_losses(filings_or_metrics: list) -> list:
     return rows
 
 
-calculateQuarterlyRealizedLosses = calculate_quarterly_realized_losses
-
-
 def generate_realized_loss_insight(rows: list) -> str:
     available = [r for r in rows if r.get("dataAvailable")]
     missing = len(rows) - len(available)
@@ -886,75 +1287,54 @@ def generate_realized_loss_insight(rows: list) -> str:
     )
 
 
-async def fetch_bdc_filing(
-    client: httpx.AsyncClient, sem: asyncio.Semaphore, cik: str, acc: str, period: str
-) -> list:
+async def fetch_bdc_filing_full(
+    client: httpx.AsyncClient, sem: asyncio.Semaphore, cik: str, acc: str,
+    period: str, form: str, need_soi: bool = True,
+) -> tuple:
+    """Fetch one BDC filing and return (investments, metric).
+
+    The primary 10-K/10-Q is downloaded once and reused for both the Schedule
+    of Investments parse (Method 2) and the statement-of-operations / balance-
+    sheet metric extraction, rather than each being fetched independently.
+
+    `need_soi=False` (the extra oldest filing kept only to de-cumulate YTD
+    figures) skips Schedule-of-Investments work and returns investments=[].
+    """
     cik_plain = str(int(cik))
     acc_path  = acc.replace("-", "")
     dir_url   = f"https://www.sec.gov/Archives/edgar/data/{cik_plain}/{acc_path}/"
 
+    investments = []
+    primary_html = None
+
     async with sem:
-        investments = []
-
-        # ── Method 1: FilingSummary.xml → XBRL R-file (fast path) ────────────
-        # Some R-files are "Not available" stubs; others are huge two-period
-        # pivot tables without maturity dates. Judge by extraction output, not
-        # by content heuristics — fall through to Method 2 if nothing parses.
-        try:
-            fs_r = await _get_retry(client, dir_url + "FilingSummary.xml", timeout=25)
-            if fs_r is not None:
-                fs_soup = BeautifulSoup(fs_r.text, "lxml")
-                for rep in fs_soup.find_all("report"):
-                    sn = rep.find("shortname") or rep.find("longname")
-                    fn_el = rep.find("htmlfilename")
-                    if sn and fn_el and re.search(r'schedules?\s+of\s+investments',
-                                                  sn.get_text(), re.IGNORECASE):
-                        fname = fn_el.get_text().strip()
-                        if fname:
-                            rr = await _get_retry(client, dir_url + fname, timeout=30)
-                            if rr is not None and len(rr.text) > 5000:
-                                investments = _extract_bdc_investments(rr.text, period)
-                            break
-        except Exception:
-            pass
-
-        # ── Method 2: Filing index HTM → primary 10-Q/10-K document ──────────
-        # Runs when Method 1 found nothing OR produced an implausible parse
-        # (e.g. Blue Owl R-files yield garbled rows); keep the better result.
-        if not _plausible_portfolio(investments):
+        # ── SOI Method 1: FilingSummary.xml → XBRL R-file (fast path) ─────────
+        # A small per-schedule render; lets funds (e.g. GSBD) whose R-file
+        # already yields a clean schedule skip the full-document parse. R-files
+        # can be "Not available" stubs or garbled pivots, so judge by extraction
+        # output and fall through to Method 2 (below) when nothing plausible parses.
+        if need_soi:
             try:
-                idx_r = await _get_retry(client, f"{dir_url}{acc}-index.htm", timeout=20)
-                if idx_r is not None:
-                    idx_soup = BeautifulSoup(idx_r.text, "lxml")
-                    for row in idx_soup.find_all("tr"):
-                        cells = [c.get_text().strip() for c in row.find_all(["td", "th"])]
-                        if len(cells) > 3 and cells[3] in ("10-Q", "10-K"):
-                            link = row.find("a", href=True)
-                            if link:
-                                fname = link["href"].rstrip("/").split("/")[-1]
-                                if fname.lower().endswith(".htm"):
-                                    doc_r = await _get_retry(client, dir_url + fname, timeout=120)
-                                    if doc_r is not None:
-                                        invs2 = _extract_bdc_investments(doc_r.text, period)
-                                        # Prefer a plausible parse; row count breaks ties
-                                        if ((_plausible_portfolio(invs2), len(invs2)) >
-                                            (_plausible_portfolio(investments), len(investments))):
-                                            investments = invs2
-                                    break
+                fs_r = await _get_retry(client, dir_url + "FilingSummary.xml", timeout=25)
+                if fs_r is not None:
+                    fs_soup = BeautifulSoup(fs_r.text, "lxml")
+                    for rep in fs_soup.find_all("report"):
+                        sn = rep.find("shortname") or rep.find("longname")
+                        fn_el = rep.find("htmlfilename")
+                        if sn and fn_el and re.search(r'schedules?\s+of\s+investments',
+                                                      sn.get_text(), re.IGNORECASE):
+                            fname = fn_el.get_text().strip()
+                            if fname:
+                                rr = await _get_retry(client, dir_url + fname, timeout=30)
+                                if rr is not None and len(rr.text) > 5000:
+                                    investments = _extract_bdc_investments(rr.text, period)
+                            break
             except Exception:
                 pass
 
-    return investments
-
-
-async def fetch_bdc_realized_loss_metric(
-    client: httpx.AsyncClient, sem: asyncio.Semaphore, cik: str, acc: str, period: str, form: str
-) -> dict:
-    cik_plain = str(int(cik))
-    acc_path  = acc.replace("-", "")
-    dir_url   = f"https://www.sec.gov/Archives/edgar/data/{cik_plain}/{acc_path}/"
-
-    async with sem:
+        # ── Primary 10-K/10-Q, fetched once ──────────────────────────────────
+        # Always needed for the metric extraction; also feeds SOI Method 2 when
+        # the R-file path above didn't yield a plausible portfolio.
         try:
             idx_r = await _get_retry(client, f"{dir_url}{acc}-index.htm", timeout=20)
             if idx_r is not None:
@@ -968,23 +1348,37 @@ async def fetch_bdc_realized_loss_metric(
                             if fname.lower().endswith(".htm"):
                                 doc_r = await _get_retry(client, dir_url + fname, timeout=120)
                                 if doc_r is not None:
-                                    return extract_realized_loss_metric(doc_r.text, period, form)
+                                    primary_html = doc_r.text
                         break
         except Exception:
             pass
 
-    return {
-        "periodEnd": period,
-        "quarter": _quarter_label_long(period),
-        "periodStart": None,
-        "originalValue": None,
-        "metricType": "unavailable",
-        "source": form,
-        "sourceTag": None,
-        "dataAvailable": False,
-        "netAssets": None,
-        "totalDebt": None,
-    }
+        # Parse the primary document once and share the tree across the metric
+        # extraction and the SOI fact parser (each otherwise re-parses ~30MB).
+        primary_soup = BeautifulSoup(primary_html, "lxml") if primary_html else None
+
+        # ── Metric extraction (statement of operations + balance sheet) ──────
+        # extract_realized_loss_metric returns the empty metric for "" input,
+        # covering the case where the primary document could not be fetched.
+        metric = extract_realized_loss_metric(primary_html or "", period, form, soup=primary_soup)
+
+        # ── SOI Method 2: parse the same primary document ────────────────────
+        # Runs when Method 1 found nothing, produced an implausible parse (e.g.
+        # Blue Owl R-files yield garbled rows), OR produced plausible marks under
+        # mis-labelled borrowers. GSBD's Schedule-of-Investments R-file renders
+        # real marks but names each row from the pivot's rate column ("Spread
+        # S + 5.75% Maturity ..."); those pass _plausible_portfolio but not
+        # _fact_names_look_valid, so without the name check Method 1's garbage
+        # names would win and the sub-90 borrower list would be unreadable.
+        if need_soi and primary_html and (not _plausible_portfolio(investments)
+                                          or not _fact_names_look_valid(investments)):
+            invs2 = _extract_bdc_investments(primary_html, period, soup=primary_soup)
+            # Prefer a plausible parse, then real-looking names, then row count.
+            if ((_plausible_portfolio(invs2), _fact_names_look_valid(invs2), len(invs2)) >
+                (_plausible_portfolio(investments), _fact_names_look_valid(investments), len(investments))):
+                investments = invs2
+
+    return investments, metric
 
 
 MONTH_NUM = {
@@ -1005,6 +1399,35 @@ DATE_ANY_RE  = re.compile(
     + MONTH_RE + r'\s+\d{1,2},?\s+\d{2,4})',
     re.IGNORECASE,
 )
+
+def _year_from_date(text: str) -> Optional[int]:
+    """Calendar year from a MM/DD/YY[YY], MM/YYYY, or 'Month D, YYYY' date."""
+    if not text:
+        return None
+    m = re.search(r'\b(\d{1,2})/(?:\d{1,2}/)?(\d{2,4})\b', text)
+    if m:
+        y = int(m.group(2))
+        if y < 100:
+            y += 2000
+        if 1990 <= y <= 2100:
+            return y
+    m2 = re.search(MONTH_RE + r'\s+\d{1,2},?\s+(\d{4})', text, re.IGNORECASE)
+    if m2 and 1990 <= int(m2.group(1)) <= 2100:
+        return int(m2.group(1))
+    return None
+
+
+def _maturity_year_from_domain(raw: str) -> Optional[int]:
+    """Maturity year from an InvestmentIdentifierAxis domain string, where it is
+    labelled (GSBD/Apollo/KBDC: '... Maturity 10/01/29', '... Maturity Date
+    04/26/2032'). Anchored on the label so an acquisition date elsewhere in the
+    domain is not mistaken for maturity. Filers that don't label a maturity
+    (OBDC, ARCC) simply yield None, and the maturity view reports N/A."""
+    if not raw:
+        return None
+    m = re.search(r'Maturity(?:\s+Date)?\b(.{0,24})', raw, re.IGNORECASE)
+    return _year_from_date(m.group(1)) if m else None
+
 
 TYPE_KEYWORDS = [
     "first lien", "1st lien", "second lien", "2nd lien", "senior secured",
@@ -1287,13 +1710,19 @@ def _parse_soi_table(chunk: str, state: dict, mult: float) -> list:
             "par":      round(par_k, 2),
             "fv":       round(fv_k, 2),
             "mark":     round(mark, 2),
+            # mat_idx is the rightmost date cell, already identified as the
+            # maturity column (acquisition dates sort earlier); keep its year.
+            "maturity": _year_from_date(cells[mat_idx]),
         })
 
     return out
 
 
 def _extract_bdc_investments_from_section(section: str) -> list:
-    # Reporting units: ARCC uses millions, GSBD thousands
+    # Reporting units: ARCC states "in millions", GSBD "in thousands". Values are
+    # normalized to $K, so millions*1000, thousands*1. Some filers (OXSQ, TCPC,
+    # PFX) tabulate whole dollars and state no units — handled by magnitude
+    # inference below rather than defaulting to thousands (which 1000x-inflates).
     units_ctx = re.sub(r'<[^>]+>', ' ', section[:200_000])
     um = re.search(r'in\s+(millions|thousands)', units_ctx, re.IGNORECASE)
     mult = 1000.0 if (um and um.group(1).lower() == 'millions') else 1.0
@@ -1311,24 +1740,63 @@ def _extract_bdc_investments_from_section(section: str) -> list:
             continue
         investments.extend(_parse_soi_table(chunk, state, mult))
 
+    # When the filing didn't state its units, infer scale from magnitude: a BDC
+    # position is ~$1M-$500M, so a median parsed FV above $1B (in $K) means the
+    # table was in whole dollars and every value is 1000x too large. Rescale to
+    # $K. Marks are ratios and unaffected. Robust because no fund has a $1B
+    # median position, so genuinely-thousands filings never trip this.
+    if not um and investments:
+        fvs = sorted(i["fv"] for i in investments if i.get("fv", 0) > 0)
+        if fvs and fvs[len(fvs) // 2] > 1_000_000:
+            for i in investments:
+                i["par"] = round(i["par"] / 1000, 2)
+                i["fv"]  = round(i["fv"] / 1000, 2)
+
     return investments
 
 
-def _extract_bdc_investments(html_text: str, period: str) -> list:
-    """Parse the Schedule of Investments from a BDC 10-K/10-Q."""
+def _extract_bdc_investments(html_text: str, period: str, soup=None) -> list:
+    """Parse the Schedule of Investments from a BDC 10-K/10-Q.
+
+    `soup` may be a pre-parsed BeautifulSoup of html_text, shared with the
+    metric extraction, so a large primary document is parsed only once.
+    """
     if not html_text:
         return []
 
+    # Structured inline-XBRL investment facts are the tagged form of the same
+    # schedule the HTML tables render, and the filing usually states its own
+    # portfolio total. Where it does, that total — not a heuristic — decides
+    # which source to trust. The fact parser reuses the shared soup, so this
+    # costs no extra document parse.
+    fact_invs, declared_total = _ixbrl_facts_schedule(html_text, period, soup=soup)
+
+    def _misfit(invs) -> Optional[float]:
+        """Relative distance from the fund's own stated portfolio total."""
+        if not declared_total or declared_total <= 0 or not invs:
+            return None
+        return abs(sum(i["fv"] for i in invs) - declared_total) / declared_total
+
+    # Facts that reconcile to the filing's own total are authoritative, and
+    # skipping the far more expensive section scrape is the hot path for large
+    # filers.
+    fact_misfit = _misfit(fact_invs)
+    if (fact_misfit is not None and fact_misfit <= 0.05
+            and not _has_bdc_aggregate_parse_rows(fact_invs)):
+        return fact_invs
+
+    if (declared_total is None and _plausible_portfolio(fact_invs)
+            and not _has_bdc_aggregate_parse_rows(fact_invs)
+            and _fact_names_look_valid(fact_invs)):
+        return fact_invs
+
+    # Fallback: HTML section scraper. The fast section finder sometimes lands on
+    # a table of contents or a note reference, so try a bounded number of
+    # candidate SOI headings and keep the strongest parsed portfolio.
     best = []
     bounds = _soi_bounds(html_text, period)
     if bounds:
         best = _extract_bdc_investments_from_section(html_text[bounds[0]:bounds[1]])
-        if _plausible_portfolio(best):
-            return best
-
-    # Fallback: the fast section finder sometimes lands on a table of contents
-    # or a note reference. Try a bounded number of candidate SOI headings and
-    # keep the strongest parsed portfolio.
     tried = {bounds} if bounds else set()
     for start, end in _soi_candidate_bounds(html_text, period)[:30]:
         if (start, end) in tried:
@@ -1339,8 +1807,27 @@ def _extract_bdc_investments(html_text: str, period: str) -> list:
         if ((_plausible_portfolio(invs), sum(i["fv"] for i in invs), len(invs)) >
             (_plausible_portfolio(best), sum(i["fv"] for i in best), len(best))):
             best = invs
-            if _plausible_portfolio(best):
-                return best
+
+    # With a stated portfolio total, let it referee the two sources rather than
+    # defaulting to either. The section scraper can land on the wrong table and
+    # return wild figures (TCPC $163B, SAR $58B, NSLR $22.8B against stated
+    # totals near $1B), so preferring it blindly is unsafe — and so is trusting
+    # facts that don't reconcile (KBDC's FY25 10-K tags ~2x its own stated
+    # portfolio). Whichever lands closer to what the fund says it owns wins.
+    if declared_total and declared_total > 0:
+        scored = [(m, invs) for invs, m in ((fact_invs, fact_misfit), (best, _misfit(best)))
+                  if m is not None]
+        if scored:
+            return min(scored, key=lambda s: s[0])[1]
+
+    # Facts may be present but implausible/aggregate; still let them win over a
+    # section parse that captured rollup rows or looks over-counted.
+    if (_plausible_portfolio(fact_invs) and
+            (_has_bdc_aggregate_parse_rows(best) or sum(i["fv"] for i in best) > sum(i["fv"] for i in fact_invs) * 1.5)):
+        return fact_invs
+    if ((_plausible_portfolio(fact_invs), sum(i["fv"] for i in fact_invs), len(fact_invs)) >
+        (_plausible_portfolio(best), sum(i["fv"] for i in best), len(best))):
+        return fact_invs
 
     if best:
         return best
@@ -1547,6 +2034,83 @@ def compute_position_scatter(all_data: dict, quarters: list, limit: int = 25) ->
             "share of the latest parsed portfolio fair value."
         ),
     }
+
+_EQUITY_TYPE_RE = re.compile(
+    r'\b(?:common stock|preferred|warrant|membership interest|equity|units?)\b',
+    re.IGNORECASE)
+
+
+def _looks_like_debt(inv: dict) -> bool:
+    """A position that should carry a maturity (i.e. not equity/warrant)."""
+    return not _EQUITY_TYPE_RE.search(inv.get("type", "") or "")
+
+
+def compute_maturity_profile(all_data: dict, quarters: list) -> dict:
+    """Maturity-year profile of the latest parsed portfolio: aggregate par per
+    year plus two weighted prices (market-value weighted and par weighted).
+
+    Only debt positions carry a maturity, so equity is excluded. Coverage is the
+    share of debt fair value that actually carries a parsed maturity; filers that
+    don't disclose maturity in the XBRL domain or SOI table (OBDC, ARCC) land
+    near zero and the view is flagged unavailable so the UI shows N/A rather than
+    a misleading partial maturity wall.
+    """
+    latest_q = quarters[-1] if quarters else ""
+    invs = all_data.get(latest_q, [])
+
+    debt = [i for i in invs if _looks_like_debt(i) and (i.get("fv", 0) or 0) > 0]
+    debt_fv = sum(i["fv"] for i in debt)
+    dated = [i for i in debt if i.get("maturity")]
+    coverage = (sum(i["fv"] for i in dated) / debt_fv) if debt_fv > 0 else 0.0
+
+    buckets = defaultdict(lambda: {"par": 0.0, "fv": 0.0, "mark_fv": 0.0})
+    for i in dated:
+        year = i["maturity"]
+        par = i.get("par", 0) or 0
+        fv = i["fv"]
+        mark = i.get("mark")
+        if par <= 0 or mark is None:
+            continue
+        b = buckets[year]
+        b["par"]     += par
+        b["fv"]      += fv
+        b["mark_fv"] += mark * fv
+
+    items = []
+    for year in sorted(buckets):
+        b = buckets[year]
+        if b["fv"] <= 0 or b["par"] <= 0:
+            continue
+        items.append({
+            "year":      year,
+            "par_m":     round(b["par"] / 1000, 2),   # $K → $M
+            "fv_m":      round(b["fv"] / 1000, 2),
+            # Market-value weighted: Σ(price·value)/Σvalue.
+            "mv_price":  round(b["mark_fv"] / b["fv"], 2),
+            # Par weighted (ΣValue/ΣPar): total fair value over total par.
+            "par_price": round(b["fv"] / b["par"] * 100, 2),
+        })
+
+    # Need a real maturity ladder to be meaningful: most debt dated, ≥2 years.
+    available = coverage >= 0.6 and len(items) >= 2
+
+    return {
+        "version": 1,
+        "available": available,
+        "quarter": latest_q,
+        "coverage_pct": round(coverage * 100, 1),
+        "dated_positions": len(dated),
+        "debt_positions": len(debt),
+        "items": items,
+        "definition": (
+            "Aggregate par by scheduled maturity year for the latest parsed "
+            "filing, with the fair-value-weighted price (Σ price·value / Σ value) "
+            "and the par-weighted price (Σ value / Σ par). Equity positions carry "
+            "no maturity and are excluded. Shown only when the filing discloses "
+            "maturities for most of the debt portfolio."
+        ),
+    }
+
 
 def compute_summary(all_data: dict, quarters: list) -> dict:
     latest_q = quarters[-1] if quarters else ""
@@ -2081,7 +2645,6 @@ async def analyze(
 
             tasks = [fetch_nport_xml(client, sem, cik, f["acc"]) for f in filings]
             xmls  = await asyncio.gather(*tasks)
-            net_assets = parse_nport_net_assets(xmls[-1]) if xmls else None
 
             leverage_rows = []
             for filing, xml_text in zip(filings, xmls):
@@ -2096,6 +2659,11 @@ async def analyze(
                     "assets": fl["totAssets"],
                     "debtIsProxy": fl["borrowingsIsProxy"],
                 })
+
+            # Latest quarter's net assets (leverage_rows is oldest-first)
+            net_assets = leverage_rows[-1]["equity"] if leverage_rows else None
+            if net_assets is not None and net_assets <= 0:
+                net_assets = None
                 realized_loss_metrics.append({
                     "periodEnd": filing["period"],
                     "quarter": _quarter_label_long(filing["period"]),
@@ -2118,21 +2686,24 @@ async def analyze(
             metric_filings = get_recent_bdc_filings(subs, n=7)
             display_periods = {f["period"] for f in filings}
 
-            tasks   = [fetch_bdc_filing(client, sem, cik, f["acc"], f["period"]) for f in filings]
-            metric_tasks = [
-                fetch_bdc_realized_loss_metric(client, sem, cik, f["acc"], f["period"], f["form"])
+            # One task per filing: the primary 10-K/10-Q is downloaded once and
+            # feeds both the Schedule-of-Investments parse and the metric
+            # extraction. Only the displayed filings need the SOI parse; the
+            # extra oldest filing supplies metrics for YTD de-cumulation only.
+            combined = await asyncio.gather(*[
+                fetch_bdc_filing_full(client, sem, cik, f["acc"], f["period"], f["form"],
+                                      need_soi=(f["period"] in display_periods))
                 for f in metric_filings
-            ]
-            results, realized_loss_metrics = await asyncio.gather(
-                asyncio.gather(*tasks),
-                asyncio.gather(*metric_tasks),
-            )
+            ])
+            realized_loss_metrics = [m for (_, m) in combined]
+            soi_by_period = {f["period"]: inv for f, (inv, _) in zip(metric_filings, combined)}
+
             net_assets = next((m.get("netAssets") for m in reversed(realized_loss_metrics)
                                if m.get("netAssets")), None)
 
-            for filing, invs in zip(filings, results):
+            for filing in filings:
                 label = period_to_label(filing["period"])
-                all_data[label] = invs
+                all_data[label] = soi_by_period.get(filing["period"], [])
                 quarters.append(label)
 
             # Leverage rows come from the same parsed iXBRL metric documents,
@@ -2161,6 +2732,7 @@ async def analyze(
         rollrate   = compute_rollrate(all_data, quarters)
         stress_pos = compute_stress_positions(all_data, quarters)
         position_scatter = compute_position_scatter(all_data, quarters)
+        maturity_profile = compute_maturity_profile(all_data, quarters)
         realized_loss_rows = calculate_quarterly_realized_losses(realized_loss_metrics)
         if fund_type != "interval_fund":
             realized_loss_rows = [r for r in realized_loss_rows
@@ -2223,6 +2795,7 @@ async def analyze(
             "rollrate":         rollrate,
             "stress_positions": stress_pos,
             "position_scatter":  position_scatter,
+            "maturity_profile":  maturity_profile,
             "realized_losses":   realized_losses,
             "credit_score":      credit_score,
             "leverage":          leverage,
@@ -2233,6 +2806,164 @@ async def analyze(
         await cache_set(client, ticker, result)
 
         return result
+
+@app.get("/api/bdc-value-map")
+async def bdc_value_map(
+    peer_group: Optional[str] = Query(None, description="Optional peer-group filter"),
+):
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        response = await load_value_map_response(
+            client,
+            SUPABASE_URL,
+            SUPABASE_KEY,
+            peer_group=peer_group,
+            snapshot_table=BDC_VALUE_SNAPSHOT_TABLE,
+        )
+        response["capabilities"]["refreshEnabled"] = (
+            response["capabilities"]["refreshEnabled"]
+            and (BDC_VALUE_PUBLIC_REFRESH or not os.environ.get("VERCEL"))
+        )
+        response["capabilities"]["refreshRequiresSecret"] = bool(
+            os.environ.get("VERCEL") and BDC_REFRESH_SECRET and not BDC_VALUE_PUBLIC_REFRESH
+        )
+        return response
+
+
+def _authorized_bdc_refresh(request: Request, secret: Optional[str]) -> bool:
+    refresh_is_public = BDC_VALUE_PUBLIC_REFRESH or not os.environ.get("VERCEL")
+    if refresh_is_public:
+        return not BDC_REFRESH_SECRET or secret in (None, BDC_REFRESH_SECRET)
+    bearer = request.headers.get("authorization", "")
+    allowed = {s for s in (BDC_REFRESH_SECRET, CRON_SECRET) if s}
+    return bool((secret and secret in allowed) or any(bearer == f"Bearer {s}" for s in allowed))
+
+
+@app.api_route("/api/bdc-value-map/refresh", methods=["GET", "POST"])
+async def refresh_bdc_value_map(
+    request: Request,
+    secret: Optional[str] = Query(None, description="Batch refresh secret"),
+    tickers: Optional[str] = Query(None, description="Comma-separated ticker subset"),
+    max_items: int = Query(5, ge=1, le=50, description="Safety cap for one refresh call"),
+    refresh_analysis: bool = Query(False, description="Force SEC analyzer recomputation"),
+):
+    if not snapshot_store_configured(SUPABASE_URL, SUPABASE_KEY):
+        raise HTTPException(503, "BDC Value Map snapshot storage is not configured")
+
+    if not _authorized_bdc_refresh(request, secret):
+        raise HTTPException(403, "Invalid refresh secret")
+
+    selected = {t.strip().upper() for t in (tickers or "").split(",") if t.strip()}
+    universe = [u for u in active_bdc_universe() if not selected or u["ticker"] in selected]
+    universe = universe[:max_items]
+    provider = get_market_data_provider()
+    refreshed, failures = [], []
+
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        previous = {
+            row.get("ticker"): row
+            for row in await load_latest_snapshots(
+                client, SUPABASE_URL, SUPABASE_KEY, BDC_VALUE_SNAPSHOT_TABLE
+            )
+        }
+        for row in universe:
+            ticker = row["ticker"]
+            try:
+                market = await provider.quote(client, ticker)
+                sec_market = await fetch_sec_company_facts_market_metrics(client, row["cik"])
+                market = {**(market or {}), **sec_market}
+                cached = None if refresh_analysis else await cache_get(client, ticker)
+                analysis_result = cached or await analyze(ticker=ticker, refresh=True)
+                snapshot = value_map_snapshot_from_analysis(row, analysis_result, market)
+                stored = await save_value_snapshot(
+                    client, SUPABASE_URL, SUPABASE_KEY, BDC_VALUE_SNAPSHOT_TABLE, snapshot
+                )
+                refreshed.append({"ticker": ticker, "stored": bool(stored)})
+            except Exception as exc:
+                prior = previous.get(ticker)
+                if prior:
+                    prior = dict(prior)
+                    prior["stale"] = True
+                    prior["error"] = str(exc)
+                    await save_value_snapshot(
+                        client, SUPABASE_URL, SUPABASE_KEY, BDC_VALUE_SNAPSHOT_TABLE, prior, error=str(exc)
+                    )
+                failures.append({"ticker": ticker, "error": str(exc)})
+
+    return {
+        "provider": provider.name,
+        "snapshotTable": BDC_VALUE_SNAPSHOT_TABLE,
+        "processed": len(refreshed) + len(failures),
+        "refreshed": refreshed,
+        "failures": failures,
+        "note": (
+            "Configure MARKET_DATA_PROVIDER/FMP_API_KEY and Supabase to persist production snapshots. "
+            "The normal /api/bdc-value-map route reads snapshots only."
+        ),
+    }
+
+
+@app.api_route("/api/bdc-value-map/refresh-market", methods=["GET", "POST"])
+async def refresh_bdc_value_map_market(
+    request: Request,
+    secret: Optional[str] = Query(None, description="Batch refresh secret"),
+    tickers: Optional[str] = Query(None, description="Comma-separated ticker subset"),
+    max_items: int = Query(50, ge=1, le=50, description="Safety cap for one market refresh call"),
+):
+    if not snapshot_store_configured(SUPABASE_URL, SUPABASE_KEY):
+        raise HTTPException(503, "BDC Value Map snapshot storage is not configured")
+    if not _authorized_bdc_refresh(request, secret):
+        raise HTTPException(403, "Invalid refresh secret")
+
+    selected = {t.strip().upper() for t in (tickers or "").split(",") if t.strip()}
+    universe = [u for u in active_bdc_universe() if not selected or u["ticker"] in selected]
+    universe = universe[:max_items]
+    provider = get_market_data_provider()
+    refreshed, failures = [], []
+
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        previous = {
+            row.get("ticker"): row
+            for row in await load_latest_snapshots(
+                client, SUPABASE_URL, SUPABASE_KEY, BDC_VALUE_SNAPSHOT_TABLE
+            )
+        }
+        sem = asyncio.Semaphore(8)
+
+        async def refresh_one(row):
+            ticker = row["ticker"]
+            prior = previous.get(ticker)
+            if not prior:
+                failures.append({"ticker": ticker, "error": "No existing CreditPulse snapshot; run a full refresh first."})
+                return
+            async with sem:
+                try:
+                    market = await provider.quote(client, ticker)
+                    snapshot = apply_market_data_to_snapshot(prior, market)
+                    stored = await save_value_snapshot(
+                        client, SUPABASE_URL, SUPABASE_KEY, BDC_VALUE_SNAPSHOT_TABLE, snapshot
+                    )
+                    refreshed.append({"ticker": ticker, "stored": bool(stored)})
+                except Exception as exc:
+                    stale = dict(prior)
+                    stale["stale"] = True
+                    stale["error"] = str(exc)
+                    await save_value_snapshot(
+                        client, SUPABASE_URL, SUPABASE_KEY, BDC_VALUE_SNAPSHOT_TABLE, stale, error=str(exc)
+                    )
+                    failures.append({"ticker": ticker, "error": str(exc)})
+
+        await asyncio.gather(*(refresh_one(row) for row in universe))
+
+    return {
+        "provider": provider.name,
+        "snapshotTable": BDC_VALUE_SNAPSHOT_TABLE,
+        "mode": "market-only",
+        "processed": len(refreshed) + len(failures),
+        "refreshed": refreshed,
+        "failures": failures,
+        "note": "Updated market-driven fields only; CreditPulse Scores and filing-derived metrics were not recomputed.",
+    }
+
 
 # ─── VERCEL HANDLER ────────────────────────────────────────────────────────────
 
