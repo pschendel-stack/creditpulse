@@ -1179,6 +1179,14 @@ def _parse_soi_table(chunk: str, state: dict, mult: float) -> list:
         if any(x in fl for x in ('total', 'subtotal', 'schedule of investments', '% of net')):
             continue
 
+        # Revolvers and delayed-draw term loans report Principal as the full
+        # commitment size, not the funded balance — Amortized Cost is the
+        # only column that reflects what's actually drawn and priced. Using
+        # Principal as the mark denominator for these understates price by
+        # the undrawn share of the commitment.
+        is_commitment_row = bool(
+            re.search(r'revolver|revolving|delayed draw|unfunded|undrawn', fl))
+
         if any(kw in fl for kw in TYPE_KEYWORDS) and len(first) < 60:
             # Continuation row: another tranche of the previous company (ARCC style)
             name = state.get("company")
@@ -1234,7 +1242,12 @@ def _parse_soi_table(chunk: str, state: dict, mult: float) -> list:
                 cand_par, cand_cost, cand_fv = nums[i], nums[i + 1], nums[i + 2]
                 if cand_fv < 10:
                     continue
-                test_par = cand_par if cand_par >= 0.01 else cand_cost
+                if is_commitment_row and cand_cost >= 0.01:
+                    test_par = cand_cost
+                elif cand_par >= 0.01:
+                    test_par = cand_par
+                else:
+                    test_par = cand_cost
                 if test_par <= 0:
                     continue
                 test_mark = cand_fv / test_par * 100
@@ -1252,8 +1265,13 @@ def _parse_soi_table(chunk: str, state: dict, mult: float) -> list:
         if par_k < 0.01:
             par_k = cost_k if cost_k > 0 else fv_k
 
-        if currency == "USD" and par_k > 0:
-            mark = fv_k / par_k * 100
+        # Price basis: par/principal for ordinary term loans, but amortized
+        # cost for revolvers/delayed draws where par is the total commitment
+        # rather than the funded (priced) balance.
+        price_basis_k = cost_k if (is_commitment_row and cost_k > 0) else par_k
+
+        if currency == "USD" and price_basis_k > 0:
+            mark = fv_k / price_basis_k * 100
         elif cost_k > 0:
             mark = fv_k / cost_k * 100
         else:
@@ -1506,9 +1524,11 @@ def compute_position_scatter(all_data: dict, quarters: list, limit: int = 25) ->
             "fv_k": round(fv, 2),
             "fv_m": round(fv / 1000, 2),
             "par_k": round(par, 2) if par is not None else None,
-            # The parsed mark is fair value divided by par/principal, scaled to
-            # 100. It is the closest available filing-derived proxy for dollar
-            # price and avoids introducing external pricing data.
+            # The parsed mark is fair value divided by par/principal (or, for
+            # revolvers/delayed draws, amortized cost — see is_commitment_row
+            # in _parse_soi_table), scaled to 100. It is the closest available
+            # filing-derived proxy for dollar price and avoids introducing
+            # external pricing data.
             "price": round(mark, 2),
             "portfolio_pct": round(fv / total_fv * 100, 2) if total_fv > 0 else None,
         })
