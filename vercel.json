@@ -65,6 +65,9 @@
   ],
   "routes": [
     { "src": "/api/analyze", "dest": "/api/analyze.py" },
+    { "src": "/api/bdc-value-map", "dest": "/api/analyze.py" },
+    { "src": "/api/bdc-value-map/refresh", "dest": "/api/analyze.py" },
+    { "src": "/api/bdc-value-map/refresh-market", "dest": "/api/analyze.py" },
     { "src": "/favicon.ico", "dest": "/favicon.ico" },
     { "src": "/favicon.svg", "dest": "/favicon.svg" },
     { "src": "/favicon-16x16.png", "dest": "/favicon-16x16.png" },
