@@ -49,10 +49,30 @@
     display: flex;
     align-items: center;
     gap: 12px;
+    flex-wrap: wrap;
   }
   .logo { font-size: 18px; font-weight: 700; letter-spacing: -0.02em; }
   .logo span { color: var(--accent); }
   .header-sub { font-size: 12px; color: var(--muted); margin-left: 4px; }
+  .top-nav {
+    margin-left: auto;
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+  .nav-link {
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 600;
+    padding: 7px 10px;
+    border-radius: 7px;
+    cursor: pointer;
+    text-decoration: none;
+  }
+  .nav-link:hover { color: var(--text); background: var(--bg); }
+  .nav-link.active { color: var(--accent); border-color: #c8d5f6; background: #eef4ff; }
 
   /* ── SEARCH ── */
   .search-wrap {
@@ -362,6 +382,122 @@
     margin-left: 8px;
   }
 
+  /* ── BDC VALUE MAP ── */
+  #valueMapPage { max-width: 1240px; margin: 32px auto 80px; padding: 0 24px; display: none; }
+  .map-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 16px;
+    margin-bottom: 18px;
+  }
+  .map-title { font-size: 25px; font-weight: 750; }
+  .map-sub { font-size: 13px; color: var(--muted); margin-top: 5px; max-width: 760px; line-height: 1.45; }
+  .data-asof {
+    font-size: 12px;
+    color: var(--muted);
+    white-space: nowrap;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    border-radius: 7px;
+    padding: 7px 10px;
+    line-height: 1.45;
+  }
+  .map-controls {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    justify-content: flex-end;
+    margin: 0 0 14px;
+  }
+  .map-select {
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    border-radius: 7px;
+    padding: 8px 10px;
+    font-size: 13px;
+  }
+  .map-action-btn {
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: #fff;
+    border-radius: 7px;
+    padding: 8px 12px;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .map-action-btn:disabled { opacity: .55; cursor: not-allowed; }
+  .map-status {
+    font-size: 12px;
+    color: var(--muted);
+    min-height: 18px;
+  }
+  .map-chart-wrap { height: 470px; position: relative; }
+  .map-empty {
+    border: 1px dashed var(--border);
+    background: var(--surface);
+    border-radius: 10px;
+    padding: 28px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 14px;
+    margin-bottom: 18px;
+  }
+  .map-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    font-size: 11px;
+    color: var(--muted);
+    margin-bottom: 10px;
+  }
+  .valuation-dot { width: 9px; height: 9px; display: inline-block; border-radius: 50%; margin-right: 4px; }
+  .valuation-pill {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 700;
+    border-radius: 999px;
+    padding: 3px 7px;
+    white-space: nowrap;
+  }
+  .valuation-undervalued { background: #d7f3e5; color: #07543f; }
+  .valuation-moderately-undervalued { background: #e7f7ed; color: #216546; }
+  .valuation-about-right { background: #eef2ff; color: #3730a3; }
+  .valuation-moderately-expensive { background: #fff2d7; color: #8a4d05; }
+  .valuation-expensive { background: #fde6e6; color: #9f1d1d; }
+  .valuation-insufficient { background: #f1f0ec; color: #77746d; }
+  table.value-map {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  table.value-map th {
+    padding: 7px 8px;
+    text-align: right;
+    border-bottom: 2px solid var(--border);
+    font-size: 10.5px;
+    color: var(--muted);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    white-space: nowrap;
+  }
+  table.value-map th:first-child, table.value-map th:nth-child(2) { text-align: left; }
+  table.value-map td {
+    padding: 8px;
+    border-bottom: 1px solid var(--border);
+    text-align: right;
+    vertical-align: middle;
+    white-space: nowrap;
+  }
+  table.value-map td:first-child, table.value-map td:nth-child(2) { text-align: left; }
+  table.value-map tr.clickable { cursor: pointer; }
+  table.value-map tr.clickable:hover td { background: var(--bg); }
+  .ticker-cell { font-weight: 800; color: var(--accent); }
+  .name-cell { max-width: 230px; overflow: hidden; text-overflow: ellipsis; }
+
   /* ── PDF EXPORT ── */
   .pdf-btn {
     margin-left: auto;
@@ -379,13 +515,24 @@
   .pdf-btn:hover { background: var(--accent); color: #fff; }
 
   .print-header,
-  .print-footer { display: none; }
+  .print-footer,
+  .print-first-page-disclosures { display: none; }
 
   @media print {
     @page { size: letter; margin: 11mm 11mm 14mm; }
     body { background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     .site-header, .search-wrap, .state, .period-tabs, .no-print { display: none !important; }
     #results { max-width: 100%; margin: 0; padding: 0; }
+    .print-page-one {
+      height: 232mm;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      padding-bottom: 30mm;
+      page-break-after: always;
+      break-after: page;
+      overflow: hidden;
+    }
     .print-header {
       display: flex;
       justify-content: space-between;
@@ -410,6 +557,23 @@
       color: #666;
       text-align: right;
     }
+    .print-first-page-disclosures {
+      display: block;
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      margin-top: 0;
+      padding-top: 6px;
+      border-top: 1px solid #d8d8d8;
+      font-size: 7px;
+      line-height: 1.15;
+      color: #222;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+    .print-first-page-disclosures p { margin: 0 0 2px; }
+    .print-first-page-disclosures strong { font-weight: 700; }
     .section, .chart-panel, .stat-card { box-shadow: none; page-break-inside: avoid; break-inside: avoid; }
     .charts-grid { page-break-inside: avoid; break-inside: avoid; }
     .stress-section { page-break-before: always; break-before: page; }
@@ -428,6 +592,9 @@
     .driver-box ul { font-size: 10px; line-height: 1.35; }
     .component-table { font-size: 10px; }
     .component-table th, .component-table td { padding: 3px 5px; }
+    .print-page-one .score-method { display: none; }
+    .print-page-one .section { margin-bottom: 8px; padding: 10px 14px; }
+    .print-page-one canvas { max-height: 85px !important; }
     .chart-panel { padding: 12px 16px; }
     .charts-grid { gap: 12px; margin-bottom: 12px; }
     table.matrix { font-size: 9px; }
@@ -458,6 +625,32 @@
     .rate-val { font-size: 15px; }
     .rate-bar-row { margin-top: 10px; }
   }
+
+  @media (max-width: 860px) {
+    .site-header { padding: 14px 18px; }
+    .header-sub { flex-basis: 100%; margin-left: 0; }
+    .top-nav { order: 2; margin-left: 0; width: 100%; }
+    .nav-link { flex: 1; text-align: center; }
+    .search-wrap { margin-top: 34px; }
+    .search-row { flex-direction: column; }
+    #results, #valueMapPage { padding: 0 16px; margin-top: 28px; }
+    .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .score-layout, .charts-grid { grid-template-columns: 1fr; }
+    .score-drivers { grid-template-columns: 1fr; }
+    .map-head { flex-direction: column; align-items: flex-start; }
+    .data-asof { white-space: normal; }
+    .map-controls { justify-content: flex-start; flex-wrap: wrap; }
+    .map-chart-wrap { height: 390px; }
+    table.value-map { font-size: 11px; }
+    table.value-map th, table.value-map td { padding: 6px; }
+  }
+
+  @media (max-width: 560px) {
+    .stats { grid-template-columns: 1fr; }
+    .fund-header { flex-wrap: wrap; }
+    .pdf-btn { margin-left: 0; }
+    .map-title { font-size: 22px; }
+  }
 </style>
 </head>
 <body>
@@ -465,11 +658,15 @@
 <header class="site-header">
   <div class="logo">Credit<span>Pulse</span></div>
   <div class="header-sub">BDC &amp; Interval Fund Analyzer · Powered by SEC EDGAR</div>
+  <nav class="top-nav" aria-label="Primary">
+    <a class="nav-link" id="navAnalyze" href="/">Analyze a Fund</a>
+    <a class="nav-link" id="navValueMap" href="/bdc-value-map">BDC Value Map</a>
+  </nav>
 </header>
 
 <div class="search-wrap" id="searchWrap">
   <h1 class="search-headline">Analyze any credit fund</h1>
-  <p class="search-sub">Enter a ticker to see mark buckets, roll-rate analysis, and stressed positions across 6 quarters of SEC filings.</p>
+  <p class="search-sub">Enter a ticker to see mark buckets, roll-rate analysis, and stressed positions across recent SEC filings.</p>
   <div class="search-row">
     <input type="text" class="search-input" id="tickerInput" placeholder="CCLFX" maxlength="10" autocomplete="off" autocorrect="off" spellcheck="false">
     <button class="search-btn" id="searchBtn" onclick="doAnalyze()">Analyze</button>
@@ -494,9 +691,70 @@
 </div>
 
 <div id="results"></div>
+<div id="valueMapPage"></div>
 
 <script>
-const API = '/api/analyze';
+const LOCAL_API_ORIGIN = 'http://127.0.0.1:8000';
+const API_ORIGIN = window.location.protocol === 'file:' ? LOCAL_API_ORIGIN : '';
+const API = `${API_ORIGIN}/api/analyze`;
+const VALUE_MAP_API = `${API_ORIGIN}/api/bdc-value-map`;
+let activePage = 'analyze';
+let analyzeRequestSeq = 0;
+
+function isLocalStaticHost() {
+  return ['127.0.0.1', 'localhost', '0.0.0.0'].includes(window.location.hostname)
+    && window.location.port !== '8000';
+}
+
+function localApiUrlFor(url) {
+  const parsed = new URL(url, window.location.href);
+  if (!parsed.pathname.startsWith('/api/')) return null;
+  return `${LOCAL_API_ORIGIN}${parsed.pathname}${parsed.search}`;
+}
+
+function apiRouteMissingMessage(pathname) {
+  return `CreditPulse API route ${pathname} returned HTML instead of JSON. `
+    + `Run the app with Vercel dev, or start the local FastAPI API at ${LOCAL_API_ORIGIN}.`;
+}
+
+async function fetchJson(url, options = {}, allowLocalFallback = true) {
+  const res = await fetch(url, options);
+  const contentType = (res.headers.get('content-type') || '').toLowerCase();
+  const body = await res.text();
+  const parsedUrl = new URL(url, window.location.href);
+
+  if (!contentType.includes('application/json')) {
+    const localUrl = allowLocalFallback && API_ORIGIN === '' && isLocalStaticHost()
+      ? localApiUrlFor(url)
+      : null;
+    if (localUrl && localUrl !== parsedUrl.href) {
+      return fetchJson(localUrl, options, false);
+    }
+    if (!res.ok) {
+      const message = body.trim() || `HTTP ${res.status}`;
+      throw new Error(res.status === 504
+        ? 'The analysis timed out while parsing SEC filings. Please try again; if it repeats, this ticker needs a parser optimization.'
+        : message);
+    }
+    if (body.trim().startsWith('<')) {
+      throw new Error(apiRouteMissingMessage(parsedUrl.pathname));
+    }
+    throw new Error(`CreditPulse API returned ${contentType || 'an unknown response type'} instead of JSON.`);
+  }
+
+  let data;
+  try {
+    data = body ? JSON.parse(body) : null;
+  } catch (err) {
+    throw new Error(`CreditPulse API returned invalid JSON for ${parsedUrl.pathname}.`);
+  }
+
+  if (!res.ok) {
+    throw new Error((data && data.detail) || `HTTP ${res.status}`);
+  }
+
+  return data;
+}
 
 // ── MARK COLOR ──────────────────────────────────────────────────────────────
 function markColor(v) {
@@ -515,8 +773,77 @@ function markChip(v) {
   return `<span class="mark-chip" style="background:${bg};color:${fg}">${v.toFixed(0)}</span>`;
 }
 
+function setActiveNav(page) {
+  document.getElementById('navAnalyze').classList.toggle('active', page === 'analyze');
+  document.getElementById('navValueMap').classList.toggle('active', page === 'value-map');
+}
+
+function isValueMapRoute() {
+  return location.pathname.replace(/\/+$/, '') === '/bdc-value-map';
+}
+
+function showAnalyzePage() {
+  activePage = 'analyze';
+  setActiveNav('analyze');
+  document.getElementById('searchWrap').style.display = 'block';
+  document.getElementById('valueMapPage').style.display = 'none';
+  const results = document.getElementById('results');
+  results.style.display = results.innerHTML.trim() ? 'block' : 'none';
+}
+
+function showValueMapPage() {
+  activePage = 'value-map';
+  analyzeRequestSeq += 1;
+  setActiveNav('value-map');
+  document.getElementById('searchWrap').style.display = 'none';
+  const results = document.getElementById('results');
+  results.innerHTML = '';
+  results.style.display = 'none';
+  document.getElementById('valueMapPage').style.display = 'block';
+  setLoading(false);
+  clearError();
+  renderValueMapPage();
+}
+
+function safePushState(path) {
+  try {
+    history.pushState({}, '', path);
+  } catch (err) {
+    console.warn('Unable to update browser history for navigation:', err);
+  }
+}
+
+function safeReplaceState(path) {
+  try {
+    history.replaceState({}, '', path);
+  } catch (err) {
+    console.warn('Unable to update browser history for navigation:', err);
+  }
+}
+
+document.getElementById('navAnalyze').addEventListener('click', e => {
+  e.preventDefault();
+  safePushState('/');
+  showAnalyzePage();
+});
+
+document.getElementById('navValueMap').addEventListener('click', e => {
+  e.preventDefault();
+  safePushState('/bdc-value-map');
+  showValueMapPage();
+});
+
+window.addEventListener('popstate', routeFromLocation);
+window.addEventListener('pageshow', syncRouteState);
+window.addEventListener('focus', syncRouteState);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) syncRouteState();
+});
+
 // ── SEARCH ──────────────────────────────────────────────────────────────────
 function runTicker(t) {
+  showAnalyzePage();
+  if (location.pathname !== '/') safePushState(`/?ticker=${encodeURIComponent(t)}`);
   document.getElementById('tickerInput').value = t;
   doAnalyze();
 }
@@ -529,22 +856,24 @@ async function doAnalyze(forceRefresh = false) {
   const ticker = document.getElementById('tickerInput').value.trim().toUpperCase();
   if (!ticker) return;
 
+  const requestId = ++analyzeRequestSeq;
+  showAnalyzePage();
   setLoading(true, 'Fetching SEC filings…');
   clearError();
+  if (!forceRefresh && location.pathname === '/') {
+    safeReplaceState(`/?ticker=${encodeURIComponent(ticker)}`);
+  }
   document.getElementById('results').style.display = 'none';
 
   try {
     const url = `${API}?ticker=${encodeURIComponent(ticker)}${forceRefresh ? '&refresh=true' : ''}`;
-    const res = await fetch(url);
-    const data = await res.json();
+    const data = await fetchJson(url);
 
-    if (!res.ok) {
-      throw new Error(data.detail || `HTTP ${res.status}`);
-    }
-
+    if (requestId !== analyzeRequestSeq || activePage !== 'analyze') return;
     setLoading(false);
     renderResults(data);
   } catch (err) {
+    if (requestId !== analyzeRequestSeq || activePage !== 'analyze') return;
     setLoading(false);
     showError(err.message || 'Unknown error');
   }
@@ -583,8 +912,17 @@ function formatPrintTimestamp(d = new Date()) {
   });
 }
 
+function formatValueMapTimestamp(value) {
+  if (!value) return 'not available';
+  if (typeof value === 'string' && /^[A-Z][a-z]{2} \d{1,2}, \d{4}$/.test(value.trim())) {
+    return value;
+  }
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? String(value) : formatPrintTimestamp(d);
+}
+
 async function downloadPDF() {
-  [scoreChartInst, positionScatterChartInst, stressChartInst, nearparChartInst, realizedLossChartInst, cumRealizedChartInst, leverageChartInst]
+  [scoreChartInst, positionScatterChartInst, maturityChartInst, stressChartInst, nearparChartInst, realizedLossChartInst, cumRealizedChartInst, leverageChartInst]
     .filter(Boolean)
     .forEach(chart => chart.update('none'));
   await nextPaint();
@@ -634,9 +972,14 @@ async function downloadPDF() {
 }
 
 // ── RENDER ──────────────────────────────────────────────────────────────────
-let scoreChartInst = null, positionScatterChartInst = null, stressChartInst = null, nearparChartInst = null, realizedLossChartInst = null, cumRealizedChartInst = null, leverageChartInst = null;
+let scoreChartInst = null, positionScatterChartInst = null, maturityChartInst = null, stressChartInst = null, nearparChartInst = null, realizedLossChartInst = null, cumRealizedChartInst = null, leverageChartInst = null, valueMapChartInst = null;
 
 function renderResults(d) {
+  if (isValueMapRoute() || activePage !== 'analyze') {
+    showValueMapPage();
+    return;
+  }
+
   const el = document.getElementById('results');
   const qtrs = d.quarters;
   const sum  = d.summary;
@@ -646,6 +989,7 @@ function renderResults(d) {
   const rl   = d.realized_losses;
   const cs   = d.credit_score;
   const ps   = d.position_scatter;
+  const mp   = d.maturity_profile;
   const lev  = d.leverage;
 
   const typeLabel = d.fund_type === 'interval_fund' ? 'Interval Fund' : 'BDC';
@@ -667,6 +1011,7 @@ function renderResults(d) {
     <div>BDC &amp; Interval Fund Analyzer · SEC EDGAR data</div>
   </div>
   <div class="print-footer"><span id="printGeneratedAt">${formatPrintTimestamp()}</span></div>
+  <div class="print-page-one">
 
   <!-- Fund header -->
   <div class="fund-header">
@@ -704,11 +1049,21 @@ function renderResults(d) {
     </div>
   </div>
 
+  <div class="print-first-page-disclosures">
+    <p><strong>For Institutional Use Only Not for Public Distribution</strong></p>
+    <p><strong>Past performance does not guarantee future results.</strong></p>
+    <p><strong>Not an offer or solicitation. The aforementioned information does not constitute an offer to sell or a solicitation of an offer to purchase any interest in the investment strategies referenced on this page.</strong></p>
+    <p><strong>No Specific Recommendations or Investment Advice. The information, analysis, and opinions expressed herein are for general information purposes only and are not intended to provide specific advice or recommendations for any individual or entity, nor does it constitute investment, tax or legal advice. Nothing in this presentation shall be relied upon as a promise or representation as to future performance. An investor should consider the investment objectives, risks and charges and expenses of any fund or investment strategy carefully before investing and should consult the investor’s own investment, legal, accounting and tax advisors before investing.</strong></p>
+  </div>
+  </div>
+
   ${renderCreditScoreSection(cs)}
 
   ${renderLeverageSection(lev)}
 
   ${renderPositionScatterSection(ps)}
+
+  ${renderMaturitySection(mp)}
 
   <!-- Bucket charts -->
   <div class="bucket-toggle-row no-print">
@@ -752,16 +1107,283 @@ function renderResults(d) {
   // Draw bucket charts (percentage view is the default for each new analysis;
   // the re-rendered toggle markup above already has "%" active)
   bucketMode = '%';
+  maturityMode = 'mv';
   renderBucketCharts(b, qtrs);
   renderCreditScoreChart(cs);
   renderLeverageChart(lev);
   renderPositionScatterChart(ps);
+  renderMaturityChart(mp);
   renderRealizedLossChart(rl);
 
   // Render roll-rate
   if (rr.period_labels.length > 0) {
     renderRollRate(rr);
   }
+}
+
+async function renderValueMapPage(peerGroup = '') {
+  const page = document.getElementById('valueMapPage');
+  page.innerHTML = `<div class="state" style="display:block;margin-top:40px"><div class="spinner"></div><p class="state-msg">Loading BDC Value Map snapshots...</p></div>`;
+  setLoading(false);
+
+  try {
+    const url = peerGroup ? `${VALUE_MAP_API}?peer_group=${encodeURIComponent(peerGroup)}` : VALUE_MAP_API;
+    const data = await fetchJson(url);
+    renderValueMapData(data, peerGroup);
+  } catch (err) {
+    const msg = err.message || 'Unable to load BDC Value Map.';
+    page.innerHTML = `<div class="map-empty">${msg}</div>`;
+  }
+}
+
+function renderValueMapData(data, selectedPeer = '') {
+  const page = document.getElementById('valueMapPage');
+  const s = data.summary || {};
+  const rows = Array.isArray(data.rows) ? data.rows : [];
+  window._valueMapRows = rows;
+  window._valueMapPeer = selectedPeer || '';
+  const refreshEnabled = !!(data.capabilities && data.capabilities.refreshEnabled);
+  const plotted = rows.filter(r => r.hasSnapshot && isFiniteNumber(r.currentCreditPulseScore) && isFiniteNumber(r.actualPriceToNav));
+  const peerOptions = [`<option value="">All peer groups</option>`]
+    .concat((data.peerGroups || []).map(g => `<option value="${g}"${g === selectedPeer ? ' selected' : ''}>${g}</option>`))
+    .join('');
+  const summaryCards = [
+    ['Median CreditPulse Score', fmtNum(s.medianCreditPulseScore, 1), `${s.snapshotCount || 0} snapshots`],
+    ['Median P/NAV', fmtMultiple(s.medianPriceToNav), 'actual market P/NAV'],
+    ['Median discount/premium', fmtPctDecimal(s.medianDiscountPremium), 'to latest reported NAV'],
+    ['Potentially undervalued', s.potentiallyUndervalued ?? 0, 'relative to current peers'],
+    ['Potentially expensive', s.potentiallyExpensive ?? 0, 'relative to current peers'],
+    ['Declining scores', s.decliningCreditPulseScores ?? 0, 'vs prior quarter'],
+    ['Current-quarter data', `${s.currentQuarterDataPct ?? 0}%`, 'coverage threshold met'],
+  ].map(([label, value, sub]) => `
+    <div class="stat-card">
+      <div class="stat-label">${label}</div>
+      <div class="stat-value">${value}</div>
+      <div class="stat-sub">${sub}</div>
+    </div>`).join('');
+
+  page.innerHTML = `
+    <div class="map-head">
+      <div>
+        <h1 class="map-title">BDC Value Map</h1>
+        <p class="map-sub">Compares the active public BDC universe using the existing CreditPulse Score, market valuation snapshots, and a transparent peer-implied P/NAV model. The CreditPulse Score remains a pure credit-quality score.</p>
+      </div>
+      <div class="data-asof">
+        <div>Prices as of ${formatValueMapTimestamp(data.marketDataAsOf || data.asOf)}</div>
+        <div>Credit metrics as of ${formatValueMapTimestamp(data.creditMetricsAsOf || data.asOf)}</div>
+      </div>
+    </div>
+    <div class="map-controls">
+      <select class="map-select" id="peerGroupFilter" onchange="renderValueMapPage(this.value)">${peerOptions}</select>
+      ${refreshEnabled ? '<button class="map-action-btn" id="refreshMapBtn" onclick="refreshVisibleValueMapSnapshots()">Refresh visible BDCs</button>' : ''}
+      <span class="map-status" id="valueMapRefreshStatus"></span>
+    </div>
+    <div class="stats">${summaryCards}</div>
+    ${data.message ? `<div class="map-empty">${data.message}</div>` : ''}
+    <div class="section">
+      <div class="position-scatter-head">
+        <div class="section-title" style="margin-bottom:0">BDC Value Map Scatterplot</div>
+        <div class="position-scatter-meta">Bubble size = equity market cap · fill = valuation classification · outline = score trend</div>
+      </div>
+      <div class="map-legend">
+        ${valuationLegend()}
+        <span>Score outline: green improving, gray stable, red declining</span>
+      </div>
+      <div class="map-chart-wrap">${plotted.length ? '<canvas id="valueMapChart"></canvas>' : '<div class="map-empty">No rows have enough score and P/NAV data to plot yet.</div>'}</div>
+    </div>
+    <div class="section">
+      <div class="section-title">Largest Active Public BDCs</div>
+      <div style="overflow-x:auto">${renderValueMapTable(rows)}</div>
+      <p class="source-note" style="margin-top:10px">Peer-Implied P/NAV is not absolute fair value. It maps the valuation-quality composite to each peer group's observed P/NAV distribution and requires minimum data coverage before classifying a BDC. The composite currently weights CreditPulse Score at 59%, earnings power at 23%, NAV preservation at 12%, and structural quality at 6%. Each component is percentile-ranked within the relevant peer group, with smaller peer groups falling back to the broader BDC universe. The valuation gap is the peer-implied P/NAV minus the actual market P/NAV, which drives the relative undervalued/about-right/expensive labels.</p>
+    </div>
+  `;
+  renderValueMapChart(data);
+}
+
+async function refreshVisibleValueMapSnapshots() {
+  const btn = document.getElementById('refreshMapBtn');
+  const status = document.getElementById('valueMapRefreshStatus');
+  const rows = Array.isArray(window._valueMapRows) ? window._valueMapRows : [];
+  const candidates = rows
+    .filter(r => r && r.ticker)
+    .sort((a, b) => Number(rowNeedsMarketRefresh(b)) - Number(rowNeedsMarketRefresh(a)))
+    .slice(0, 3);
+
+  if (!candidates.length) {
+    if (status) status.textContent = 'No BDCs available to refresh.';
+    return;
+  }
+
+  const tickers = candidates.map(r => r.ticker).join(',');
+  if (btn) btn.disabled = true;
+  if (status) status.textContent = `Refreshing ${tickers}. This can take about a minute...`;
+
+  try {
+    const url = `${VALUE_MAP_API}/refresh?tickers=${encodeURIComponent(tickers)}&max_items=${candidates.length}`;
+    const data = await fetchJson(url, { method: 'POST' });
+    const ok = (data.refreshed || []).map(r => r.ticker).join(', ') || 'none';
+    const failed = (data.failures || []).map(r => r.ticker).join(', ');
+    if (status) status.textContent = failed ? `Refreshed ${ok}; failed ${failed}.` : `Refreshed ${ok}. Reloading...`;
+    await renderValueMapPage(window._valueMapPeer || '');
+  } catch (err) {
+    if (status) status.textContent = err.message || 'Refresh failed.';
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function rowNeedsMarketRefresh(row) {
+  return !row.hasSnapshot
+    || !isFiniteNumber(row.stockPrice)
+    || !isFiniteNumber(row.latestNavPerShare)
+    || !isFiniteNumber(row.actualPriceToNav)
+    || !isFiniteNumber(row.equityMarketCapitalization);
+}
+
+function valuationLegend() {
+  return [
+    ['valuation-undervalued', 'Potentially undervalued'],
+    ['valuation-moderately-undervalued', 'Moderately undervalued'],
+    ['valuation-about-right', 'About right'],
+    ['valuation-moderately-expensive', 'Moderately expensive'],
+    ['valuation-expensive', 'Potentially expensive'],
+    ['valuation-insufficient', 'Insufficient data'],
+  ].map(([cls, label]) => `<span><span class="valuation-dot ${cls}"></span>${label}</span>`).join('');
+}
+
+function renderValueMapTable(rows) {
+  const body = rows.map(r => `
+    <tr class="clickable" onclick="openTickerFromMap('${r.ticker}')">
+      <td class="ticker-cell">${r.ticker}</td>
+      <td class="name-cell" title="${r.legalName || ''}">${r.legalName || 'N/A'}</td>
+      <td>${r.peerGroup || 'N/A'}</td>
+      <td>${fmtNum(r.currentCreditPulseScore, 0)}</td>
+      <td>${formatScoreChange(r.scoreChange)}</td>
+      <td>${fmtCurrency(r.stockPrice)}</td>
+      <td>${fmtCurrency(r.latestNavPerShare)}</td>
+      <td>${fmtMultiple(r.actualPriceToNav)}</td>
+      <td>${fmtPctDecimal(r.discountPremiumToNav)}</td>
+      <td>${fmtMultiple(r.peerImpliedPriceToNav)}</td>
+      <td>${fmtMultiple(r.valuationGap)}</td>
+      <td><span class="valuation-pill valuation-${r.classificationClass || 'insufficient'}">${r.classification || 'Insufficient data'}</span></td>
+      <td>${r.historicalValuationConclusion || 'Insufficient data'}</td>
+      <td>${fmtCurrencyCompact(r.equityMarketCapitalization)}</td>
+      <td>${fmtNum(r.debtToEquity, 2)}${isFiniteNumber(r.debtToEquity) ? 'x' : ''}</td>
+    </tr>`).join('');
+  return `<table class="value-map">
+    <thead><tr>
+      <th>Ticker</th><th>Name</th><th>Peer group</th><th>Score</th><th>Δ</th><th>Price</th><th>NAV/sh</th><th>P/NAV</th><th>Disc./Prem.</th><th>Peer-implied</th><th>Gap</th><th>Vs peers</th><th>Vs own history</th><th>Market cap</th><th>D/E</th>
+    </tr></thead>
+    <tbody>${body || '<tr><td colspan="15" style="text-align:left;color:var(--muted)">No BDC rows available.</td></tr>'}</tbody>
+  </table>`;
+}
+
+function openTickerFromMap(ticker) {
+  history.pushState({}, '', `/?ticker=${encodeURIComponent(ticker)}`);
+  showAnalyzePage();
+  document.getElementById('tickerInput').value = ticker;
+  doAnalyze();
+}
+
+function renderValueMapChart(data) {
+  if (valueMapChartInst) { valueMapChartInst.destroy(); valueMapChartInst = null; }
+  const canvas = document.getElementById('valueMapChart');
+  const rows = (data.rows || []).filter(r => r.hasSnapshot && isFiniteNumber(r.currentCreditPulseScore) && isFiniteNumber(r.actualPriceToNav));
+  if (!canvas || !rows.length) return;
+  const maxCap = Math.max(...rows.map(r => Number(r.equityMarketCapitalization || 0)), 1);
+  const colorFor = cls => ({
+    undervalued: '#0b7a55',
+    'moderately-undervalued': '#51a36f',
+    'about-right': '#4f6fd7',
+    'moderately-expensive': '#d99021',
+    expensive: '#c83b32',
+    insufficient: '#a3a09a',
+  })[cls || 'insufficient'] || '#a3a09a';
+  const borderFor = r => (r.scoreChange || 0) > 1 ? '#087f5b' : (r.scoreChange || 0) < -1 ? '#c81e1e' : '#73706a';
+  const points = rows.map(r => ({
+    x: Number(r.currentCreditPulseScore),
+    y: Number(r.actualPriceToNav),
+    r: 5 + Math.sqrt((r.equityMarketCapitalization || 0) / maxCap) * 23,
+    ticker: r.ticker,
+    name: r.legalName,
+    classification: r.classification,
+    pnav: r.actualPriceToNav,
+    implied: r.peerImpliedPriceToNav,
+    gap: r.valuationGap,
+    cap: r.equityMarketCapitalization,
+    scoreChange: r.scoreChange,
+    className: r.classificationClass,
+  }));
+  const quadrantPlugin = {
+    id: 'valueMapQuadrants',
+    beforeDraw(chart) {
+      const { ctx, chartArea, scales } = chart;
+      if (!chartArea) return;
+      const midX = scales.x.getPixelForValue(70);
+      const midY = scales.y.getPixelForValue(1);
+      ctx.save();
+      ctx.strokeStyle = 'rgba(80,80,80,0.22)';
+      ctx.setLineDash([5, 5]);
+      ctx.beginPath(); ctx.moveTo(midX, chartArea.top); ctx.lineTo(midX, chartArea.bottom); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(chartArea.left, midY); ctx.lineTo(chartArea.right, midY); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(11,11,11,0.45)';
+      ctx.font = '600 11px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif';
+      ctx.fillText('Potential opportunity', chartArea.right - 145, chartArea.bottom - 14);
+      ctx.fillText('Cheap for a reason', chartArea.left + 12, chartArea.bottom - 14);
+      ctx.fillText('Quality priced in', chartArea.right - 115, chartArea.top + 18);
+      ctx.fillText('Valuation risk', chartArea.left + 12, chartArea.top + 18);
+      ctx.restore();
+    },
+  };
+
+  valueMapChartInst = new Chart(canvas, {
+    type: 'bubble',
+    data: {
+      datasets: [
+        {
+          label: 'BDCs',
+          data: points,
+          backgroundColor: points.map(p => colorFor(p.className) + 'cc'),
+          borderColor: points.map(p => borderFor(p)),
+          borderWidth: 2,
+        },
+      ],
+    },
+    plugins: [quadrantPlugin],
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      onClick(evt, els) {
+        const hit = els.find(el => el.datasetIndex === 0);
+        if (hit) openTickerFromMap(points[hit.index].ticker);
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: ctx => `${ctx[0]?.raw?.ticker || ''} · ${ctx[0]?.raw?.name || ''}`,
+            label: ctx => {
+              const p = ctx.raw;
+              return [
+                `Score: ${p.x} (${formatScoreChange(p.scoreChange)})`,
+                `P/NAV: ${fmtMultiple(p.pnav)}`,
+                `Peer-implied P/NAV: ${fmtMultiple(p.implied)}`,
+                `Gap: ${fmtMultiple(p.gap)}`,
+                `Market cap: ${fmtCurrencyCompact(p.cap)}`,
+                p.classification || 'Insufficient data',
+              ];
+            },
+          },
+        },
+      },
+      scales: {
+        x: { min: 0, max: 100, title: { display: true, text: 'CreditPulse Score' }, grid: { color: '#eee' } },
+        y: { title: { display: true, text: 'Price / NAV' }, grid: { color: '#eee' }, ticks: { callback: v => Number(v).toFixed(2) + 'x' } },
+      },
+    },
+  });
 }
 
 function scoreClass(category) {
@@ -1202,6 +1824,131 @@ function renderPositionScatterChart(scatter) {
   });
 }
 
+// ── MATURITY PROFILE ─────────────────────────────────────────────────────────
+// 'mv' = market-value weighted price (Σ price·value / Σ value);
+// 'par' = par weighted (Σ value / Σ par). Resets to 'mv' on each analysis.
+let maturityMode = 'mv';
+
+function renderMaturitySection(mp) {
+  if (!mp || !mp.available) {
+    const cov = mp && (mp.coverage_pct !== undefined && mp.coverage_pct !== null) ? mp.coverage_pct : 0;
+    return `<div class="section">
+      <div class="section-title">Maturity Profile: Par &amp; Weighted Price</div>
+      <p class="position-note">This filer does not disclose per-loan maturity dates in a form we can parse from its SEC filing${cov ? ` (only ${cov}% of debt fair value carried a parseable maturity)` : ''}, so a maturity-year view is not available for this fund. Funds that tag maturities in their schedule of investments (e.g. GSBD, KBDC) show the full analysis here.</p>
+    </div>`;
+  }
+
+  return `<div class="section">
+    <div class="position-scatter-head">
+      <div class="section-title" style="margin-bottom:0">Maturity Profile: Par &amp; Weighted Price</div>
+      <div class="position-scatter-meta">${mp.quarter || 'latest quarter'} · ${mp.coverage_pct}% of debt FV dated · ${mp.dated_positions} loans</div>
+    </div>
+    <div class="bucket-toggle-row no-print" style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+      <span style="font-size:12px;color:var(--muted)">Price line —</span>
+      <div class="mode-toggle">
+        <button class="mode-btn active" id="matBtnMv" onclick="setMaturityMode('mv')">Market-value weighted</button>
+        <button class="mode-btn" id="matBtnPar" onclick="setMaturityMode('par')">Par weighted (ΣValue/ΣPar)</button>
+      </div>
+    </div>
+    <div class="position-chart-wrap" style="height:340px">
+      <canvas id="maturityChart"></canvas>
+    </div>
+    <p class="position-note">${mp.definition || ''}</p>
+  </div>`;
+}
+
+function setMaturityMode(mode) {
+  maturityMode = mode;
+  const mv  = document.getElementById('matBtnMv');
+  const par = document.getElementById('matBtnPar');
+  if (mv)  mv.classList.toggle('active', mode === 'mv');
+  if (par) par.classList.toggle('active', mode === 'par');
+  if (window._maturityData) renderMaturityChart(window._maturityData);
+}
+
+function renderMaturityChart(mp) {
+  if (maturityChartInst) { maturityChartInst.destroy(); maturityChartInst = null; }
+  if (!mp || !mp.available) return;
+  const canvas = document.getElementById('maturityChart');
+  const items = Array.isArray(mp.items) ? mp.items : [];
+  if (!canvas || !items.length) return;
+  window._maturityData = mp;
+
+  const labels   = items.map(i => i.year);
+  const parData  = items.map(i => i.par_m);
+  const priceKey = maturityMode === 'par' ? 'par_price' : 'mv_price';
+  const price    = items.map(i => i[priceKey]);
+  const priceLbl = maturityMode === 'par' ? 'Par-weighted price' : 'Weighted price';
+
+  const prices = price.filter(v => Number.isFinite(v));
+  const pMin = prices.length ? Math.max(0, Math.floor((Math.min(...prices) - 4) / 5) * 5) : 0;
+  const pMax = prices.length ? Math.ceil((Math.max(...prices) + 4) / 5) * 5 : 105;
+
+  maturityChartInst = new Chart(canvas, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        {
+          type: 'line',
+          label: priceLbl,
+          data: price,
+          // Gold from the stress-zone palette (CHART_COLORS[5]).
+          borderColor: CHART_COLORS[5],
+          backgroundColor: 'rgba(200,155,40,0.10)',
+          fill: false, tension: 0.3, pointRadius: 4, pointHoverRadius: 5,
+          pointBackgroundColor: CHART_COLORS[5], borderWidth: 2,
+          yAxisID: 'price', order: 0,
+        },
+        {
+          type: 'bar',
+          label: 'Par ($M)',
+          data: parData,
+          // Darkest blue from the stress-zone palette (CHART_COLORS[4]).
+          backgroundColor: CHART_COLORS[4],
+          yAxisID: 'par', order: 2, maxBarThickness: 48,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      plugins: {
+        legend: { position: 'top', labels: { boxWidth: 12, font: { size: 12 }, usePointStyle: true } },
+        tooltip: {
+          callbacks: {
+            title: ctx => `Maturity ${ctx[0]?.label || ''}`,
+            label: ctx => ctx.dataset.yAxisID === 'par'
+              ? ` Par: $${Number(ctx.parsed.y).toLocaleString(undefined, {maximumFractionDigits: 0})}M`
+              : ` ${ctx.dataset.label}: ${Number(ctx.parsed.y).toFixed(1)}% of par`,
+          },
+        },
+      },
+      scales: {
+        x: {
+          grid: { display: false },
+          ticks: { font: { size: 12 } },
+        },
+        par: {
+          position: 'left',
+          beginAtZero: true,
+          grid: { color: '#eee' },
+          ticks: { font: { size: 11 }, callback: v => '$' + Number(v).toLocaleString() },
+          title: { display: true, text: 'Aggregate par ($M)', font: { size: 12 } },
+        },
+        price: {
+          position: 'right',
+          min: pMin, max: pMax,
+          grid: { drawOnChartArea: false },
+          ticks: { font: { size: 11 } },
+          title: { display: true, text: 'Weighted price (% of par)', font: { size: 12 } },
+        },
+      },
+    },
+  });
+}
+
 function formatCompactDollar(v) {
   if (v === null || v === undefined || Number.isNaN(Number(v))) return 'N/A';
   const abs = Math.abs(Number(v));
@@ -1210,6 +1957,30 @@ function formatCompactDollar(v) {
   if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(1)}M`;
   if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(1)}K`;
   return `${sign}$${abs.toFixed(0)}`;
+}
+
+function isFiniteNumber(v) {
+  return v !== null && v !== undefined && Number.isFinite(Number(v));
+}
+
+function fmtNum(v, digits = 1) {
+  return isFiniteNumber(v) ? Number(v).toFixed(digits) : 'N/A';
+}
+
+function fmtCurrency(v) {
+  return isFiniteNumber(v) ? '$' + Number(v).toFixed(2) : 'N/A';
+}
+
+function fmtCurrencyCompact(v) {
+  return isFiniteNumber(v) ? formatCompactDollar(Number(v)) : 'N/A';
+}
+
+function fmtMultiple(v) {
+  return isFiniteNumber(v) ? Number(v).toFixed(2) + 'x' : 'N/A';
+}
+
+function fmtPctDecimal(v) {
+  return isFiniteNumber(v) ? (Number(v) * 100).toFixed(1) + '%' : 'N/A';
 }
 
 function realizedMetricLabel(type) {
@@ -1633,6 +2404,36 @@ function renderStressTable(sp, qtrs) {
   html += `</tbody></table></div></div>`;
   return html;
 }
+
+function routeFromLocation() {
+  if (isValueMapRoute()) {
+    showValueMapPage();
+    return;
+  }
+  showAnalyzePage();
+  const params = new URLSearchParams(location.search);
+  const ticker = params.get('ticker');
+  if (ticker) {
+    document.getElementById('tickerInput').value = ticker.toUpperCase();
+    doAnalyze();
+  }
+}
+
+function syncRouteState() {
+  if (!isValueMapRoute()) return;
+  const results = document.getElementById('results');
+  const valueMapPage = document.getElementById('valueMapPage');
+  const mapIsHidden = valueMapPage && getComputedStyle(valueMapPage).display === 'none';
+  const staleAnalysisVisible = results && (
+    getComputedStyle(results).display !== 'none' ||
+    results.innerHTML.trim().length > 0
+  );
+  if (activePage !== 'value-map' || mapIsHidden || staleAnalysisVisible) {
+    showValueMapPage();
+  }
+}
+
+routeFromLocation();
 </script>
 </body>
 </html>
