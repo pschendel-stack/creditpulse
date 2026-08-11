@@ -134,6 +134,7 @@ INTERVAL_TICKER_CIK = {
     # Non-traded/private BDCs can be marketed under ticker-like symbols that
     # are not present in SEC's public company ticker files.
     "BCRED": "0001803498",
+    "OCIC":  "0001812554",  # Blue Owl Credit Income Corp. (non-traded BDC)
     "CELFX": "0001842754",
     "PFLEX": "0001688554",
     "PFFLX": "0001688554",
