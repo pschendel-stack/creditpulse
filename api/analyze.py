@@ -135,6 +135,9 @@ INTERVAL_TICKER_CIK = {
     # are not present in SEC's public company ticker files.
     "BCRED": "0001803498",
     "OCIC":  "0001812554",  # Blue Owl Credit Income Corp. (non-traded BDC)
+    # Distinct from MRCC (Monroe Capital Corp, CIK 0001512931), the listed
+    # Monroe BDC that EDGAR's ticker search does resolve.
+    "MCIP":  "0001742313",  # Monroe Capital Income Plus Corp. (non-traded BDC)
     "CELFX": "0001842754",
     "PFLEX": "0001688554",
     "PFFLX": "0001688554",
