@@ -138,6 +138,9 @@ INTERVAL_TICKER_CIK = {
     # Distinct from MRCC (Monroe Capital Corp, CIK 0001512931), the listed
     # Monroe BDC that EDGAR's ticker search does resolve.
     "MCIP":  "0001742313",  # Monroe Capital Income Plus Corp. (non-traded BDC)
+    # Resolves without the pin; listed here so the full-universe re-warm, which
+    # sweeps this dict, keeps it refreshed.
+    "GCRED": "0001930087",  # Golub Capital Private Credit Fund (non-traded BDC)
     "CELFX": "0001842754",
     "PFLEX": "0001688554",
     "PFFLX": "0001688554",
