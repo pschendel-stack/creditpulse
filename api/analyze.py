@@ -513,13 +513,32 @@ def _price_denominator(par, cost, fv, label: str = ""):
     (CCAP) report columns that make fv/cost wild, and because callers drop rows
     whose mark leaves a sane band, an unguarded swap silently deletes positions
     and breaks the portfolio total — so fall back to par whenever cost does not
-    price sensibly."""
+    price sensibly.
+
+    Naming alone is not enough to find these: Monroe labels the tranche
+    "(Revolver)"/"(Delayed Draw)" but Goldman (GSBD) labels nothing, so its
+    Spotless Brands revolver — 37% drawn, funded piece marked 96 — priced at 36
+    against the commitment and dragged the borrower's weighted mark to 78. So
+    also detect the shape structurally: cost far below par while the funded piece
+    prices near par is an undrawn commitment whatever the filer calls it.
+
+    Caveat: a loan ACQUIRED at a deep discount also has cost far below par with
+    fair value near cost, and this rule would price it against cost and hide the
+    discount. That is uncommon in direct-lending books, and ordinary impairment is
+    unaffected — a loan originated at par and later marked down has cost close to
+    par, so the rule never fires on it."""
     par = par or 0
     cost = cost or 0
-    if (par > 0 and cost > 0 and cost < par * 0.95
-            and UNFUNDED_COMMITMENT_RE.search(label or "")):
-        implied = fv / cost * 100 if cost else 0
-        if 20 <= implied <= 150:
+    if par > 0 and cost > 0 and cost < par * 0.95:
+        implied = fv / cost * 100
+        par_mark = fv / par * 100
+        labelled = bool(UNFUNDED_COMMITMENT_RE.search(label or ""))
+        # Named revolver/DDTL: trust the label over a wide band.
+        if labelled and 20 <= implied <= 150:
+            return cost
+        # Unnamed: require the funded piece to price near par AND the
+        # commitment-based mark to look impaired, so only the artefact flips.
+        if not labelled and 85 <= implied <= 115 and par_mark < 90:
             return cost
     if par > 0:
         return par
