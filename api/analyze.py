@@ -490,6 +490,44 @@ def parse_nport_xml(xml_text: str) -> list:
 
 # ─── BDC 10-K/10-Q PARSER ──────────────────────────────────────────────────────
 
+UNFUNDED_COMMITMENT_RE = re.compile(
+    r'\b(?:revolver|revolving|delayed[\s\-]*draw|ddtl)\b', re.IGNORECASE)
+
+
+def _price_denominator(par, cost, fv, label: str = ""):
+    """Choose what a position's price is measured against.
+
+    Par is right for a funded loan, but revolvers and delayed-draw term loans
+    report par as the TOTAL COMMITMENT while cost and fair value cover only the
+    drawn portion. Dividing by the commitment yields the draw percentage rather
+    than a price — Monroe (MCIP) shows healthy revolvers at "marks" of 1-10,
+    which floods the stressed-position table, the sub-50 mark buckets and the
+    score's delinquency component with positions that are not impaired at all.
+
+    For those instruments, price the funded exposure: use cost when it sits
+    materially below par. A fully drawn revolver has cost == par and is
+    unaffected, and a genuinely impaired loan still marks down because its fair
+    value falls against whichever denominator applies.
+
+    The swap only applies when it actually yields a plausible price. Some filers
+    (CCAP) report columns that make fv/cost wild, and because callers drop rows
+    whose mark leaves a sane band, an unguarded swap silently deletes positions
+    and breaks the portfolio total — so fall back to par whenever cost does not
+    price sensibly."""
+    par = par or 0
+    cost = cost or 0
+    if (par > 0 and cost > 0 and cost < par * 0.95
+            and UNFUNDED_COMMITMENT_RE.search(label or "")):
+        implied = fv / cost * 100 if cost else 0
+        if 20 <= implied <= 150:
+            return cost
+    if par > 0:
+        return par
+    if cost > 0:
+        return cost
+    return fv
+
+
 def _plausible_portfolio(invs: list) -> bool:
     """Sanity check for a parsed schedule: enough positions and most fair
     value marked near par. A garbled column mapping scatters the marks."""
@@ -838,7 +876,7 @@ def _ixbrl_facts_schedule(html_text: str, period: str, soup=None) -> tuple:
 
             par = vals.get("par")
             cost = vals.get("cost")
-            denom = par if (par and par > 0) else cost if (cost and cost > 0) else fv
+            denom = _price_denominator(par, cost, fv, parsed.get("raw", ""))
             if denom <= 0:
                 continue
             mark = fv / denom * 100
@@ -1682,10 +1720,14 @@ def _parse_soi_table(chunk: str, state: dict, mult: float) -> list:
         if par_k < 0.01:
             par_k = cost_k if cost_k > 0 else fv_k
 
-        if currency == "USD" and par_k > 0:
-            mark = fv_k / par_k * 100
-        elif cost_k > 0:
-            mark = fv_k / cost_k * 100
+        # Non-USD positions price against cost: par is in local currency while
+        # fair value is reported in USD, so par is not a comparable denominator.
+        if currency == "USD":
+            denom_k = _price_denominator(par_k, cost_k, fv_k, f"{name} {itype}")
+        else:
+            denom_k = cost_k
+        if denom_k > 0:
+            mark = fv_k / denom_k * 100
         else:
             continue
 
