@@ -189,6 +189,32 @@ def period_to_label(period: str) -> str:
     except Exception:
         return period
 
+def unique_period_labels(periods: list) -> list:
+    """Calendar-quarter labels for a list of period-end dates (oldest first),
+    disambiguated so every label is unique.
+
+    A fund that shifts its fiscal quarter-end (e.g. Oct/Jan/Apr/Jul moving to
+    Dec/Mar/Jun/Sep) can file two distinct reporting periods that both fall in
+    the same calendar quarter (Oct 31 and Dec 31 are both "Q4"). Since these
+    labels are used as dict keys for the underlying filing data, a collision
+    silently overwrites one period's data with the other's — this appends the
+    period's month when a label repeats so every period keeps its own data.
+    """
+    labels = [period_to_label(p) for p in periods]
+    counts = defaultdict(int)
+    for label in labels:
+        counts[label] += 1
+    out = []
+    for label, period in zip(labels, periods):
+        if counts[label] > 1:
+            try:
+                month = datetime.strptime(period, "%Y-%m-%d").strftime("%b")
+                label = f"{label} ({month})"
+            except Exception:
+                pass
+        out.append(label)
+    return out
+
 # ─── SUPABASE CACHE ────────────────────────────────────────────────────────────
 
 async def cache_get(client: httpx.AsyncClient, ticker: str) -> Optional[dict]:
@@ -2695,10 +2721,10 @@ async def analyze(
 
             tasks = [fetch_nport_xml(client, sem, cik, f["acc"]) for f in filings]
             xmls  = await asyncio.gather(*tasks)
+            labels = unique_period_labels([f["period"] for f in filings])
 
             leverage_rows = []
-            for filing, xml_text in zip(filings, xmls):
-                label = period_to_label(filing["period"])
+            for filing, xml_text, label in zip(filings, xmls, labels):
                 all_data[label] = parse_nport_xml(xml_text)
                 quarters.append(label)
                 fl = parse_nport_fund_level(xml_text)
@@ -2751,16 +2777,20 @@ async def analyze(
             net_assets = next((m.get("netAssets") for m in reversed(realized_loss_metrics)
                                if m.get("netAssets")), None)
 
-            for filing in filings:
-                label = period_to_label(filing["period"])
+            labels = unique_period_labels([f["period"] for f in filings])
+            for filing, label in zip(filings, labels):
                 all_data[label] = soi_by_period.get(filing["period"], [])
                 quarters.append(label)
 
             # Leverage rows come from the same parsed iXBRL metric documents,
-            # restricted to the displayed quarters.
+            # restricted to the displayed quarters. Reuse the disambiguated
+            # labels above so a colliding quarter shows the same label here
+            # as it does in the bucket/roll-rate/stress-position data.
+            period_label_map = dict(zip((f["period"] for f in filings), labels))
             leverage_rows = [
                 {
-                    "quarter": period_to_label(m.get("periodEnd") or ""),
+                    "quarter": period_label_map.get(m.get("periodEnd"),
+                                                     period_to_label(m.get("periodEnd") or "")),
                     "debt": m.get("totalDebt"),
                     "equity": m.get("netAssets"),
                 }
