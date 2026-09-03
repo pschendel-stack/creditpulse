@@ -157,6 +157,8 @@ INTERVAL_TICKER_CIK = {
     # Newly public BDC; EDGAR company search doesn't resolve the ticker yet.
     "LIEN":  "0001843162",  # Chicago Atlantic BDC, Inc.
     "OFLEX": "0002028436",  # T. Rowe Price OHA Flexible Credit Income Fund (interval fund, NPORT-P)
+    "DDCIX": "0002067955",  # Diameter Dynamic Credit Fund (interval fund, NPORT-P)
+    "SAFTX": "0002028174",  # Sound Point Alternative Income Fund (interval fund, NPORT-P)
 }
 
 # ─── UTILITY ───────────────────────────────────────────────────────────────────
