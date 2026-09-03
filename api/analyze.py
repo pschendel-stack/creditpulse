@@ -237,7 +237,7 @@ async def cache_get(client: httpx.AsyncClient, ticker: str) -> Optional[dict]:
                 # cache entries recompute instead of rendering without new fields
                 if (result.get("realized_losses") or {}).get("version") != 3:
                     return None
-                if (result.get("credit_score") or {}).get("version") != 1:
+                if (result.get("credit_score") or {}).get("version") != 2:
                     return None
                 if (result.get("position_scatter") or {}).get("version") != 2:
                     return None
@@ -2337,11 +2337,22 @@ def _avg(values: list) -> Optional[float]:
     return sum(vals) / len(vals) if vals else None
 
 
-def _score_category(score: Optional[float]) -> str:
+def _score_category(score: Optional[float], stress_pct: Optional[float] = None,
+                    distressed_pct: Optional[float] = None) -> str:
+    """Score bucket, with an explicit floor on "Exceptional": a fund that
+    still carries any distressed (sub-70 mark) exposure or more than trivial
+    overall stress can score well on the weighted average without actually
+    being loss-free, so a weighted score alone isn't sufficient to earn the
+    top label. When stress data isn't available, category falls back to the
+    plain score cut."""
     if score is None:
         return "Unavailable"
     if score >= 90:
-        return "Exceptional"
+        exceptional = (
+            stress_pct is None or distressed_pct is None or
+            (distressed_pct <= 0.0 and stress_pct < 1.0)
+        )
+        return "Exceptional" if exceptional else "Strong"
     if score >= 80:
         return "Strong"
     if score >= 70:
@@ -2472,9 +2483,12 @@ def _score_for_period(all_data: dict, quarters: list, idx: int, rollrate: dict,
         })
 
     if stress is not None and weighted_mark is not None:
+        # No near-par bonus here: near_par_pct is ~ (100 - stress_pct), so
+        # rewarding it on top of the stress penalty below double-counts the
+        # same signal and let a fund with real stress still clamp to 100.
         component_scores["portfolioQuality"] = round(_clamp(
             100 - stress * 2.0 - (top_stressed or 0) * 6.0 -
-            max(0.0, 98 - weighted_mark) * 2.0 + (near_par or 0) * 0.08
+            max(0.0, 98 - weighted_mark) * 2.0
         ))
         observations.update({
             "near_par_pct": round(near_par or 0, 1),
@@ -2490,23 +2504,48 @@ def _score_for_period(all_data: dict, quarters: list, idx: int, rollrate: dict,
         loss_worsening = 0.0
         if latest_realized is not None and prior_loss is not None and total_dollars > 0:
             loss_worsening = max(0.0, (prior_loss - latest_realized) / total_dollars * 100)
+        # Interval funds never report realized/unrealized gains via NPORT-P,
+        # so loss_worsening is always 0 for them — momentum would otherwise
+        # never reflect losses at all. Penalize the current stress *level*
+        # (not just its direction) more heavily when that signal is missing,
+        # so a fund can't sit at an elevated, flat stress plateau indefinitely
+        # without it ever showing up. A lower base (was 82) also means a
+        # merely-flat quarter no longer starts most of the way to "Strong."
+        stress_level_rate = 0.8 if component_scores["lossesAndRecoveries"] is None else 0.3
         component_scores["momentum"] = round(_clamp(
-            82 - max(0.0, stress_change) * 5.0 + max(0.0, -stress_change) * 2.0 -
-            max(0.0, (fwd or 0) - (cure or 0)) * 1.1 - loss_worsening * 12.0
+            75 - max(0.0, stress_change) * 5.0 + max(0.0, -stress_change) * 2.0 -
+            max(0.0, (fwd or 0) - (cure or 0)) * 1.1 - loss_worsening * 12.0 -
+            stress * stress_level_rate
         ))
         observations["stress_change"] = round(stress_change, 1)
 
     available_weight = sum(SCORE_WEIGHTS[k] for k, v in component_scores.items() if v is not None)
-    if available_weight:
-        overall = round(sum(component_scores[k] * SCORE_WEIGHTS[k]
-                            for k in component_scores if component_scores[k] is not None) / available_weight)
+
+    # When lossesAndRecoveries has no data (always true for interval funds,
+    # since NPORT-P doesn't disclose fund-level realized/unrealized gains),
+    # redirect its 20-point weight onto delinquency and portfolioQuality —
+    # the two components that actually measure credit stress — rather than
+    # letting it spread evenly onto roll-rate migration and momentum, which
+    # don't measure loss and would otherwise carry more say over the score
+    # than they should whenever the loss signal is missing.
+    score_weights = dict(SCORE_WEIGHTS)
+    if component_scores["lossesAndRecoveries"] is None:
+        freed = score_weights.pop("lossesAndRecoveries")
+        to_delinquency = round(freed * 0.6)
+        score_weights["delinquency"] += to_delinquency
+        score_weights["portfolioQuality"] += freed - to_delinquency
+
+    score_available_weight = sum(score_weights.get(k, 0) for k, v in component_scores.items() if v is not None)
+    if score_available_weight:
+        overall = round(sum(component_scores[k] * score_weights.get(k, 0)
+                            for k in component_scores if component_scores[k] is not None) / score_available_weight)
     else:
         overall = None
 
     return {
         "quarter": q,
         "score": overall,
-        "category": _score_category(overall),
+        "category": _score_category(overall, stress, distressed),
         "componentScores": component_scores,
         "dataCoveragePct": round(available_weight / sum(SCORE_WEIGHTS.values()) * 100),
         "observations": observations,
@@ -2647,9 +2686,9 @@ def compute_creditpulse_score(ticker: str, all_data: dict, quarters: list, rollr
     positive = positive[:3]
     negative = negative[:3]
     result = {
-        "version": 1,
+        "version": 2,
         "overallScore": score,
-        "category": _score_category(score),
+        "category": _score_category(score, obs.get("stress_pct"), obs.get("distressed_pct")),
         "priorPeriodScore": prior_score,
         "scoreChange": score_change,
         "confidence": confidence,
