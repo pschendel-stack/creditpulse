@@ -256,7 +256,7 @@ async def save_value_snapshot(client, supabase_url: str, supabase_key: str, snap
     if not supabase_url or not supabase_key:
         return save_local_snapshot(snapshot, error) if local_snapshot_store_enabled() else False
     now = datetime.now(timezone.utc).isoformat()
-    await client.post(
+    r = await client.post(
         f"{supabase_url}/rest/v1/{snapshot_table}",
         json={
             "ticker": snapshot.get("ticker"),
@@ -274,6 +274,10 @@ async def save_value_snapshot(client, supabase_url: str, supabase_key: str, snap
         },
         timeout=12,
     )
+    # A non-2xx here (e.g. Postgres rejecting a malformed field) previously
+    # went unnoticed: this always returned True regardless of the response,
+    # so callers reported "stored" even when nothing was written.
+    r.raise_for_status()
     return True
 
 
