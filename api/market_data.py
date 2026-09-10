@@ -6,10 +6,30 @@ logic.
 """
 
 import os
+import re
 from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
+
+
+def _parse_nasdaq_timestamp(value: Optional[str]) -> str:
+    """Nasdaq's lastTradeTimestamp is a human-readable string like
+    "Sep 10, 2026 12:22 PM ET", not ISO-8601. Writing that straight into a
+    timestamptz column makes Postgres reject the whole insert with a 400 —
+    and since callers don't check the write's status code, that failure was
+    silent. Best-effort parse it (dropping the trailing timezone
+    abbreviation; treated as UTC since exact trade-time precision isn't
+    needed here) and always fall back to the current time rather than ever
+    emit a string Postgres can't parse."""
+    if value:
+        cleaned = re.sub(r'\s+[A-Z]{2,4}$', '', value.strip())
+        for fmt in ("%b %d, %Y %I:%M %p", "%b %d, %Y %I:%M:%S %p"):
+            try:
+                return datetime.strptime(cleaned, fmt).replace(tzinfo=timezone.utc).isoformat()
+            except ValueError:
+                continue
+    return datetime.now(timezone.utc).isoformat()
 
 
 class MarketDataProvider:
@@ -51,7 +71,7 @@ class NasdaqMarketDataProvider(MarketDataProvider):
             "price": price,
             "sharesOutstanding": None,
             "equityMarketCapitalization": None,
-            "timestamp": trade_date or datetime.now(timezone.utc).isoformat(),
+            "timestamp": _parse_nasdaq_timestamp(trade_date),
         }
 
 
