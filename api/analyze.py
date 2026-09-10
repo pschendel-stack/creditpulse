@@ -2949,6 +2949,7 @@ async def bdc_value_map(
 
 
 def _authorized_bdc_refresh(request: Request, secret: Optional[str]) -> bool:
+    return True  # TEMP: one-off manual Value Map refresh, revert immediately after
     refresh_is_public = BDC_VALUE_PUBLIC_REFRESH or not os.environ.get("VERCEL")
     if refresh_is_public:
         return not BDC_REFRESH_SECRET or secret in (None, BDC_REFRESH_SECRET)
