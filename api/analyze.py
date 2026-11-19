@@ -26,7 +26,7 @@ import warnings
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
 # BDC Value Map subsystem (peer-relative valuation of the public BDC universe).
-from api.bdc_universe import active_bdc_universe
+from api.bdc_universe import active_bdc_universe, universe_by_ticker
 from api.bdc_value_map import (
     apply_market_data_to_snapshot,
     fetch_sec_company_facts_market_metrics,
@@ -284,6 +284,12 @@ async def lookup_cik(client: httpx.AsyncClient, ticker: str) -> Optional[str]:
     if ticker in INTERVAL_TICKER_CIK:
         return INTERVAL_TICKER_CIK[ticker]
 
+    # The curated public-BDC universe already carries each filer's CIK, so
+    # the Value Map refresh never depends on EDGAR ticker resolution.
+    known = universe_by_ticker().get(ticker)
+    if known and known.get("cik"):
+        return str(known["cik"]).zfill(10)
+
     # Closed-end interval-fund tickers are usually 5 characters ending in X.
     # Prefer EDGAR full-text entity matches before the company browser, which
     # often resolves these share classes to an unrelated registrant trust.
@@ -291,6 +297,13 @@ async def lookup_cik(client: httpx.AsyncClient, ticker: str) -> Optional[str]:
         cik = await lookup_cik_fulltext(client, ticker)
         if cik:
             return cik
+
+    # Listed operating companies (including BDCs) via SEC's company ticker
+    # file. The company-browser lookup below now returns HTTP 400 for
+    # ticker queries, so this is the primary path for listed tickers.
+    cik = await lookup_cik_company_tickers(client, ticker)
+    if cik:
+        return cik
 
     url = (f"https://www.sec.gov/cgi-bin/browse-edgar"
            f"?action=getcompany&company=&CIK={ticker}&type=&dateb=&owner=include&count=5")
@@ -325,6 +338,25 @@ async def lookup_cik(client: httpx.AsyncClient, ticker: str) -> Optional[str]:
     if cik:
         return cik
     return None
+
+def cik_from_company_tickers(payload: dict, ticker: str) -> Optional[str]:
+    """Find a ticker in SEC's company_tickers.json ({"0": {cik_str, ticker, title}, ...})."""
+    for row in (payload or {}).values():
+        if isinstance(row, dict) and str(row.get("ticker", "")).upper() == ticker:
+            cik = row.get("cik_str")
+            if cik is not None:
+                return str(cik).zfill(10)
+    return None
+
+async def lookup_cik_company_tickers(client: httpx.AsyncClient, ticker: str) -> Optional[str]:
+    try:
+        r = await client.get("https://www.sec.gov/files/company_tickers.json",
+                             headers=DATA_UA, timeout=30)
+        if r.status_code >= 400:
+            return None
+        return cik_from_company_tickers(r.json(), ticker)
+    except Exception:
+        return None
 
 async def lookup_cik_fulltext(client: httpx.AsyncClient, ticker: str) -> Optional[str]:
     """Resolve closed-end/interval fund share-class tickers via EDGAR search."""
