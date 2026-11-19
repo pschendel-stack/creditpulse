@@ -1,0 +1,64 @@
+name: BDC Value Map refresh
+
+# Daily: recompute any BDC that has filed a new 10-Q/10-K since its stored
+# snapshot, and update prices for the rest. Quarterly updates happen on their
+# own as filings land; a red run means a ticker failed (see the run summary).
+on:
+  schedule:
+    - cron: "23 11 * * *"   # 11:23 UTC daily, after the prior day's EDGAR filings
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Recompute every selected BDC from SEC filings"
+        type: boolean
+        default: false
+      tickers:
+        description: "Optional comma-separated subset (e.g. ARCC,OFS)"
+        type: string
+        default: ""
+      dry_run:
+        description: "Report what would be refreshed; write nothing"
+        type: boolean
+        default: false
+
+concurrency:
+  group: bdc-refresh
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Run tests
+        run: uv run --with pytest python -m pytest -q
+
+      - name: Refresh BDC Value Map
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          BDC_VALUE_SNAPSHOT_TABLE: ${{ vars.BDC_VALUE_SNAPSHOT_TABLE || 'bdc_value_snapshots' }}
+          MARKET_DATA_PROVIDER: ${{ vars.MARKET_DATA_PROVIDER || 'nasdaq' }}
+          FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+          VERCEL: "1"   # never fall back to a local snapshot file in CI
+          INPUT_FORCE: ${{ inputs.force }}
+          INPUT_TICKERS: ${{ inputs.tickers }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          args=()
+          [ "$INPUT_FORCE" = "true" ] && args+=(--force)
+          [ "$INPUT_DRY_RUN" = "true" ] && args+=(--dry-run)
+          [ -n "$INPUT_TICKERS" ] && args+=(--tickers "$INPUT_TICKERS")
+          uv run python scripts/refresh_bdc_value_map.py "${args[@]}"
