@@ -46,5 +46,25 @@ class RefreshDecisionTests(unittest.TestCase):
         self.assertFalse(refresh.needs_full_refresh(prior, None, force=False))
 
 
+class SupabaseUrlTests(unittest.TestCase):
+    def test_normalizes_common_variants(self):
+        expected = "https://abc.supabase.co"
+        for raw in [
+            "https://abc.supabase.co",
+            " https://abc.supabase.co/ ",
+            '"https://abc.supabase.co"',
+            "https://abc.supabase.co/rest/v1",
+            "abc.supabase.co",
+            "abc",
+        ]:
+            self.assertEqual(refresh.normalize_supabase_url(raw), expected, raw)
+        self.assertEqual(refresh.normalize_supabase_url(""), "")
+
+    def test_shape_description_hides_value(self):
+        shape = refresh.describe_secret_shape("https://secretref.supabase.co")
+        self.assertNotIn("secretref", shape)
+        self.assertIn("scheme 'https'", shape)
+
+
 if __name__ == "__main__":
     unittest.main()
