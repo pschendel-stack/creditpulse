@@ -1266,15 +1266,14 @@ function renderValueMapTable(rows) {
       <td>${fmtMultiple(r.peerImpliedPriceToNav)}</td>
       <td>${fmtMultiple(r.valuationGap)}</td>
       <td><span class="valuation-pill valuation-${r.classificationClass || 'insufficient'}">${r.classification || 'Insufficient data'}</span></td>
-      <td>${r.historicalValuationConclusion || 'Insufficient data'}</td>
       <td>${fmtCurrencyCompact(r.equityMarketCapitalization)}</td>
       <td>${fmtNum(r.debtToEquity, 2)}${isFiniteNumber(r.debtToEquity) ? 'x' : ''}</td>
     </tr>`).join('');
   return `<table class="value-map">
     <thead><tr>
-      <th>Ticker</th><th>Name</th><th>Peer group</th><th>Score</th><th>Δ</th><th>Price</th><th>NAV/sh</th><th>P/NAV</th><th>Disc./Prem.</th><th>Peer-implied</th><th>Gap</th><th>Vs peers</th><th>Vs own history</th><th>Market cap</th><th>D/E</th>
+      <th>Ticker</th><th>Name</th><th>Peer group</th><th>Score</th><th>Δ</th><th>Price</th><th>NAV/sh</th><th>P/NAV</th><th>Disc./Prem.</th><th>Peer-implied</th><th>Gap</th><th>Vs peers</th><th>Market cap</th><th>D/E</th>
     </tr></thead>
-    <tbody>${body || '<tr><td colspan="15" style="text-align:left;color:var(--muted)">No BDC rows available.</td></tr>'}</tbody>
+    <tbody>${body || '<tr><td colspan="14" style="text-align:left;color:var(--muted)">No BDC rows available.</td></tr>'}</tbody>
   </table>`;
 }
 
