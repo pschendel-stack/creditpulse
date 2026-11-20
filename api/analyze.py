@@ -101,6 +101,9 @@ NET_UNREALIZED_TAGS = [
 # Total net assets (equity) from the balance sheet — an instant value at the
 # period end, tagged in the same 10-K/10-Q iXBRL we already download.
 NET_ASSETS_TAGS = [
+    # BDC balance sheets commonly tag "Total net assets" as AssetsNet; some
+    # filers (e.g. SLRC) use only AssetsNet for the fund-level total.
+    "us-gaap:AssetsNet",
     "us-gaap:StockholdersEquity",
     "us-gaap:StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
     "us-gaap:MembersEquity",
@@ -1136,10 +1139,15 @@ def _best_ixbrl_metric(facts: dict, contexts: dict, period: str, tag_list: list)
     return sorted(candidates, key=lambda c: c[:3])[0][3]
 
 
-def _best_ixbrl_instant(facts: dict, contexts: dict, period: str, tag_list: list) -> Optional[float]:
+def _best_ixbrl_instant(facts: dict, contexts: dict, period: str, tag_list: list,
+                        fund_level_only: bool = False) -> Optional[float]:
     """Best fund-level instant value at the period end for any tag in tag_list.
-    Prefers earlier-ranked tags and contexts without segments (whole-fund
-    balance-sheet values rather than share-class or rollforward columns)."""
+
+    A context without segments (the whole fund's balance sheet) always beats
+    one with segments (an equity component, share class, or a joint venture's
+    figures in the notes), whatever the tag ranking: a lower-ranked tag on the
+    whole fund is better than a higher-ranked tag on one of its parts. With
+    fund_level_only, segmented values are never returned."""
     candidates = []
     for tag_name in tag_list:
         for tag in facts.get(tag_name, ()):
@@ -1150,11 +1158,13 @@ def _best_ixbrl_instant(facts: dict, contexts: dict, period: str, tag_list: list
             ctx = contexts.get(cid)
             if not ctx or ctx.get("instant") != period:
                 continue
+            if fund_level_only and ctx.get("has_segment"):
+                continue
             try:
                 tag_rank = tag_list.index(tag_name)
             except ValueError:
                 tag_rank = 99
-            candidates.append((tag_rank, 1 if ctx.get("has_segment") else 0, value))
+            candidates.append((1 if ctx.get("has_segment") else 0, tag_rank, value))
     if not candidates:
         return None
     return sorted(candidates, key=lambda c: c[:2])[0][2]
@@ -1242,7 +1252,8 @@ def extract_realized_loss_metric(html_text: str, period: str, source: str, soup=
     contexts = _context_periods(soup)
     facts = _index_ixbrl_facts(soup)
 
-    net_assets = _best_ixbrl_instant(facts, contexts, period, NET_ASSETS_TAGS)
+    net_assets = _best_ixbrl_instant(facts, contexts, period, NET_ASSETS_TAGS,
+                                     fund_level_only=True)
     if net_assets and net_assets > 0:
         result["netAssets"] = net_assets
 
