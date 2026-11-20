@@ -22,6 +22,7 @@ import asyncio
 import os
 import sys
 import time
+import traceback
 from pathlib import Path
 from typing import Optional
 
@@ -126,12 +127,66 @@ def write_summary(results: list, failures: list):
             fh.write(text)
 
 
+def normalize_supabase_url(raw: Optional[str]) -> str:
+    """Tolerate the usual copy-paste variants of the project URL.
+
+    Accepts surrounding whitespace/quotes, a trailing slash or /rest/v1 path,
+    and a bare host (``abc.supabase.co``) or project ref (``abc``).
+    """
+    url = (raw or "").strip().strip("'\"").strip()
+    for suffix in ("/rest/v1/", "/rest/v1"):
+        if url.endswith(suffix):
+            url = url[: -len(suffix)]
+    url = url.rstrip("/")
+    if url and "://" not in url:
+        url = "https://" + (url if "." in url else f"{url}.supabase.co")
+    return url
+
+
+def describe_secret_shape(raw: Optional[str]) -> str:
+    """Describe a URL secret's shape without revealing its value."""
+    raw = raw or ""
+    scheme = raw.split("://", 1)[0] if "://" in raw else "(none)"
+    return (f"length {len(raw)}, scheme {scheme!r}, "
+            f"leading/trailing whitespace {raw != raw.strip()}, "
+            f"ends with '.supabase.co' {raw.strip().rstrip('/').endswith('.supabase.co')}")
+
+
+async def check_supabase(client, url: str, key: str, table: str) -> Optional[str]:
+    """Return None if the snapshot table is readable, else a reason."""
+    try:
+        r = await client.get(
+            f"{url}/rest/v1/{table}",
+            params={"select": "ticker", "limit": "1"},
+            headers={"apikey": key, "Authorization": f"Bearer {key}"},
+            timeout=20,
+        )
+    except Exception as exc:
+        return f"request failed: {type(exc).__name__}: {exc}"
+    if r.status_code >= 400:
+        return f"HTTP {r.status_code}: {r.text[:300]}"
+    return None
+
+
 async def main(args) -> int:
-    url, key = analyzer.SUPABASE_URL, analyzer.SUPABASE_KEY
+    raw_url, key = analyzer.SUPABASE_URL, analyzer.SUPABASE_KEY.strip()
+    url = normalize_supabase_url(raw_url)
     table = analyzer.BDC_VALUE_SNAPSHOT_TABLE
     if not (url and key) and not args.dry_run:
         print("SUPABASE_URL and SUPABASE_KEY must be set (repository secrets).")
         return 2
+    # analyze() writes its own analysis cache with the module-level settings.
+    analyzer.SUPABASE_URL, analyzer.SUPABASE_KEY = url, key
+
+    if url and key:
+        async with httpx.AsyncClient(follow_redirects=True) as probe:
+            problem = await check_supabase(probe, url, key, table)
+        if problem:
+            print(f"Supabase check failed ({problem}).")
+            print(f"SUPABASE_URL secret shape: {describe_secret_shape(raw_url)}. "
+                  "Expected https://<project-ref>.supabase.co")
+            if not args.dry_run:
+                return 2
 
     selected = {t.strip().upper() for t in (args.tickers or "").split(",") if t.strip()}
     universe = [u for u in active_bdc_universe() if not selected or u["ticker"] in selected]
@@ -152,6 +207,7 @@ async def main(args) -> int:
             except Exception as exc:
                 error = f"{type(exc).__name__}: {exc}"
                 print(f"  ! {ticker}: {error}")
+                traceback.print_exc()
                 failures.append({"ticker": ticker, "error": error})
                 if prior and not args.dry_run:
                     stale = dict(prior, stale=True, error=error)
