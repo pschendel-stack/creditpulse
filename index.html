@@ -485,6 +485,9 @@
     white-space: nowrap;
   }
   table.value-map th:first-child, table.value-map th:nth-child(2) { text-align: left; }
+  table.value-map th.sortable { cursor: pointer; user-select: none; }
+  table.value-map th.sortable:hover { color: var(--text, #222); }
+  table.value-map th.sorted { color: var(--accent); }
   table.value-map td {
     padding: 8px;
     border-bottom: 1px solid var(--border);
@@ -1193,7 +1196,7 @@ function renderValueMapData(data, selectedPeer = '') {
     </div>
     <div class="section">
       <div class="section-title">Largest Active Public BDCs</div>
-      <div style="overflow-x:auto">${renderValueMapTable(rows)}</div>
+      <div style="overflow-x:auto" id="valueMapTableWrap">${renderValueMapTable(rows)}</div>
       <p class="source-note" style="margin-top:10px">Peer-Implied P/NAV is not absolute fair value. It maps the valuation-quality composite to each peer group's observed P/NAV distribution and requires minimum data coverage before classifying a BDC. The composite currently weights CreditPulse Score at 59%, earnings power at 23%, NAV preservation at 12%, and structural quality at 6%. Each component is percentile-ranked within the relevant peer group, with smaller peer groups falling back to the broader BDC universe. The valuation gap is the peer-implied P/NAV minus the actual market P/NAV, which drives the relative undervalued/about-right/expensive labels.</p>
     </div>
   `;
@@ -1251,7 +1254,61 @@ function valuationLegend() {
   ].map(([cls, label]) => `<span><span class="valuation-dot ${cls}"></span>${label}</span>`).join('');
 }
 
+// Click a column header to sort; click again to reverse. Missing values always
+// sort last. With no column chosen, rows keep the API order (market cap, desc).
+const VALUATION_CLASS_RANK = {
+  'undervalued': 0, 'moderately-undervalued': 1, 'about-right': 2,
+  'moderately-expensive': 3, 'expensive': 4,
+};
+const VALUE_MAP_COLUMNS = [
+  { label: 'Ticker', value: r => r.ticker, text: true },
+  { label: 'Name', value: r => r.legalName, text: true },
+  { label: 'Peer group', value: r => r.peerGroup, text: true },
+  { label: 'Score', value: r => r.currentCreditPulseScore },
+  { label: 'Δ', value: r => r.scoreChange },
+  { label: 'Price', value: r => r.stockPrice },
+  { label: 'NAV/sh', value: r => r.latestNavPerShare },
+  { label: 'P/NAV', value: r => r.actualPriceToNav },
+  { label: 'Disc./Prem.', value: r => r.discountPremiumToNav },
+  { label: 'Peer-implied', value: r => r.peerImpliedPriceToNav },
+  { label: 'Gap', value: r => r.valuationGap },
+  { label: 'Vs peers', value: r => VALUATION_CLASS_RANK[r.classificationClass] },
+  { label: 'Market cap', value: r => r.equityMarketCapitalization },
+  { label: 'D/E', value: r => r.debtToEquity },
+];
+window._valueMapSort = window._valueMapSort || { col: null, dir: 1 };
+
+function sortValueMapRows(rows) {
+  const { col, dir } = window._valueMapSort;
+  if (col === null) return rows;
+  const column = VALUE_MAP_COLUMNS[col];
+  const missing = v => v === null || v === undefined || v === '' || (!column.text && !isFiniteNumber(v));
+  return rows.slice().sort((a, b) => {
+    const va = column.value(a), vb = column.value(b);
+    if (missing(va) || missing(vb)) return missing(va) - missing(vb);
+    const cmp = column.text ? String(va).localeCompare(String(vb)) : va - vb;
+    return cmp * dir;
+  });
+}
+
+function sortValueMap(col) {
+  const s = window._valueMapSort;
+  // First click: numbers high-to-low, text A-Z. Second click reverses.
+  if (s.col === col) s.dir = -s.dir;
+  else { s.col = col; s.dir = VALUE_MAP_COLUMNS[col].text ? 1 : -1; }
+  const peer = window._valueMapPeer;
+  const rows = (window._valueMapRows || []).filter(r => !peer || r.peerGroup === peer);
+  document.getElementById('valueMapTableWrap').innerHTML = renderValueMapTable(rows);
+}
+
 function renderValueMapTable(rows) {
+  rows = sortValueMapRows(rows);
+  const { col: sortCol, dir: sortDir } = window._valueMapSort;
+  const header = VALUE_MAP_COLUMNS.map((c, i) => {
+    const arrow = i === sortCol ? (sortDir > 0 ? ' ▲' : ' ▼') : '';
+    const aria = i === sortCol ? (sortDir > 0 ? 'ascending' : 'descending') : 'none';
+    return `<th class="sortable${i === sortCol ? ' sorted' : ''}" aria-sort="${aria}" onclick="sortValueMap(${i})" title="Sort by ${c.label}">${c.label}${arrow}</th>`;
+  }).join('');
   const body = rows.map(r => `
     <tr class="clickable" onclick="openTickerFromMap('${r.ticker}')">
       <td class="ticker-cell">${r.ticker}</td>
@@ -1270,9 +1327,7 @@ function renderValueMapTable(rows) {
       <td>${fmtNum(r.debtToEquity, 2)}${isFiniteNumber(r.debtToEquity) ? 'x' : ''}</td>
     </tr>`).join('');
   return `<table class="value-map">
-    <thead><tr>
-      <th>Ticker</th><th>Name</th><th>Peer group</th><th>Score</th><th>Δ</th><th>Price</th><th>NAV/sh</th><th>P/NAV</th><th>Disc./Prem.</th><th>Peer-implied</th><th>Gap</th><th>Vs peers</th><th>Market cap</th><th>D/E</th>
-    </tr></thead>
+    <thead><tr>${header}</tr></thead>
     <tbody>${body || '<tr><td colspan="14" style="text-align:left;color:var(--muted)">No BDC rows available.</td></tr>'}</tbody>
   </table>`;
 }
