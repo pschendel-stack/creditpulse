@@ -990,7 +990,6 @@ function renderResults(d) {
   const rr   = d.rollrate;
   const sp   = d.stress_positions;
   const rl   = d.realized_losses;
-  const cs   = d.credit_score;
   const ps   = d.position_scatter;
   const mp   = d.maturity_profile;
   const lev  = d.leverage;
@@ -1060,8 +1059,6 @@ function renderResults(d) {
   </div>
   </div>
 
-  ${renderCreditScoreSection(cs)}
-
   ${renderLeverageSection(lev)}
 
   ${renderPositionScatterSection(ps)}
@@ -1112,7 +1109,6 @@ function renderResults(d) {
   bucketMode = '%';
   maturityMode = 'mv';
   renderBucketCharts(b, qtrs);
-  renderCreditScoreChart(cs);
   renderLeverageChart(lev);
   renderPositionScatterChart(ps);
   renderMaturityChart(mp);
