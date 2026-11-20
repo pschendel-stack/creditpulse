@@ -1545,12 +1545,12 @@ function renderCreditScoreChart(score) {
       datasets: [{
         label: 'CreditPulse Score',
         data: points.map(p => p.score),
-        borderColor: '#1a56db',
-        backgroundColor: 'rgba(26,86,219,0.08)',
+        borderColor: '#1f5c45',
+        backgroundColor: 'rgba(31,92,69,0.08)',
         fill: true,
         tension: 0.25,
         pointRadius: 3,
-        pointBackgroundColor: '#1a56db',
+        pointBackgroundColor: '#1f5c45',
       }],
     },
     options: {
@@ -1673,9 +1673,9 @@ function renderLeverageChart(lev) {
           type: 'line',
           label: 'Asset coverage %',
           data: items.map(i => i.coveragePct),
-          borderColor: '#1a56db',
-          backgroundColor: 'rgba(26,86,219,0.08)',
-          fill: false, tension: 0.25, pointRadius: 3, pointBackgroundColor: '#1a56db',
+          borderColor: '#1f5c45',
+          backgroundColor: 'rgba(31,92,69,0.08)',
+          fill: false, tension: 0.25, pointRadius: 3, pointBackgroundColor: '#1f5c45',
           yAxisID: 'pct', order: 0,
         },
         {
@@ -1696,8 +1696,8 @@ function renderLeverageChart(lev) {
           type: 'bar',
           label: 'Assets (numerator)',
           data: numer,
-          backgroundColor: 'rgba(26,86,219,0.30)',
-          borderColor: 'rgba(26,86,219,0.55)', borderWidth: 1,
+          backgroundColor: 'rgba(31,92,69,0.28)',
+          borderColor: 'rgba(31,92,69,0.55)', borderWidth: 1,
           yAxisID: 'usd', order: 2,
         },
         {
@@ -1762,7 +1762,7 @@ function renderPositionScatterSection(scatter) {
       <div class="position-scatter-meta">Top ${items.length} positions · ${scatter.quarter || 'latest quarter'}</div>
     </div>
     <div class="position-legend">
-      <span><span class="legend-dot" style="background:#284f9e"></span>90+</span>
+      <span><span class="legend-dot" style="background:#1f5c45"></span>90+</span>
       <span><span class="legend-dot" style="background:#d9a321"></span>80-90</span>
       <span><span class="legend-dot" style="background:#d46b2d"></span>70-80</span>
       <span><span class="legend-dot" style="background:#ce3430"></span>&lt;70</span>
@@ -1791,7 +1791,7 @@ function renderPositionScatterChart(scatter) {
   const bandColor = price => price < 70 ? '#ce3430'
     : price < 80 ? '#d46b2d'
     : price < 90 ? '#d9a321'
-    : '#284f9e';
+    : '#1f5c45';
 
   const points = items.map(item => ({
     x: Number(item.fv_m || 0),
@@ -1812,7 +1812,7 @@ function renderPositionScatterChart(scatter) {
         { lo: scales.y.min, hi: 70, color: 'rgba(206,52,48,0.08)' },
         { lo: 70, hi: 80, color: 'rgba(212,107,45,0.08)' },
         { lo: 80, hi: 90, color: 'rgba(217,163,33,0.08)' },
-        { lo: 90, hi: scales.y.max, color: 'rgba(40,79,158,0.05)' },
+        { lo: 90, hi: scales.y.max, color: 'rgba(31,92,69,0.05)' },
       ];
       ctx.save();
       bands.forEach(b => {
@@ -1968,7 +1968,7 @@ function renderMaturityChart(mp) {
           type: 'bar',
           label: 'Par ($M)',
           data: parData,
-          // Darkest blue from the stress-zone palette (CHART_COLORS[4]).
+          // Darkest green from the stress-zone palette (CHART_COLORS[4]).
           backgroundColor: CHART_COLORS[4],
           yAxisID: 'par', order: 2, maxBarThickness: 48,
         },
@@ -2188,12 +2188,12 @@ function renderRealizedLossChart(rl) {
         datasets: [{
           label: 'Cumulative realized',
           data: cum,
-          borderColor: 'rgba(200,30,30,0.9)',
-          backgroundColor: 'rgba(200,30,30,0.07)',
+          borderColor: 'rgba(31,92,69,0.9)',
+          backgroundColor: 'rgba(31,92,69,0.07)',
           fill: true,
           tension: 0.2,
           pointRadius: 3,
-          pointBackgroundColor: 'rgba(200,30,30,0.9)',
+          pointBackgroundColor: 'rgba(31,92,69,0.9)',
         }],
       },
       options: {
@@ -2215,11 +2215,11 @@ function renderRealizedLossChart(rl) {
 
 // ── BUCKET CHARTS ────────────────────────────────────────────────────────────
 const CHART_COLORS = [
-  'rgba(180,210,240,0.85)',
-  'rgba(130,175,215,0.85)',
-  'rgba(80,140,190,0.85)',
-  'rgba(40,100,160,0.85)',
-  'rgba(15,60,120,0.85)',
+  'rgba(207,226,215,0.95)',
+  'rgba(151,193,170,0.95)',
+  'rgba(90,150,122,0.95)',
+  'rgba(47,112,85,0.95)',
+  'rgba(23,70,52,0.95)',
   'rgba(200,155,40,0.92)',
 ];
 
