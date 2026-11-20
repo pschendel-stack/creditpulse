@@ -293,7 +293,7 @@ async def cache_set(client: httpx.AsyncClient, ticker: str, result: dict):
         # adding new result fields never requires a table migration — this is
         # what previously broke caching (a POSTed column absent from the table
         # 400s the whole write). ticker is the PK; all other columns are nullable.
-        await client.post(
+        r = await client.post(
             f"{SUPABASE_URL}/rest/v1/analysis_cache",
             json={
                 "ticker": ticker,
@@ -308,8 +308,12 @@ async def cache_set(client: httpx.AsyncClient, ticker: str, result: dict):
             },
             timeout=10,
         )
-    except Exception:
-        pass
+        # A failed write must not fail the request, but it must be visible:
+        # a silently rejected upsert leaves a stale row served for 30 days.
+        if r.status_code >= 300:
+            print(f"cache_set {ticker}: HTTP {r.status_code} {r.text[:500]}")
+    except Exception as e:
+        print(f"cache_set {ticker}: {type(e).__name__}: {e}")
 
 # ─── EDGAR LOOKUPS ─────────────────────────────────────────────────────────────
 
