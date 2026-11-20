@@ -15,6 +15,9 @@
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="mask-icon" href="/safari-pinned-tab.svg" color="#E50914">
 <link rel="manifest" href="/site.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,500;8..60,600;8..60,700&family=Source+Sans+3:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <!-- Vercel Web Analytics (plain-HTML variant; the React package is for Next.js apps) -->
 <script>
@@ -25,33 +28,39 @@
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
   :root {
-    --bg:       #f7f6f2;
+    /* Credit Memo look: white paper, hairline rules, serif headings, forest-green accent */
+    --bg:       #fbfbfa;
     --surface:  #ffffff;
-    --border:   #e5e4de;
-    --text:     #0b0b0b;
-    --muted:    #898781;
-    --accent:   #1a56db;
-    --danger:   #c81e1e;
-    --warn:     #9e5a03;
-    --ok:       #085041;
-    --tag-bg:   #eef2ff;
-    --tag-text: #3730a3;
+    --border:   #e2e4e1;
+    --rule:     #1b1f1c;
+    --text:     #1b1f1c;
+    --muted:    #6b726c;
+    --accent:   #1f5c45;
+    --accent-soft: #e5efe9;
+    --danger:   #a8321f;
+    --warn:     #94600b;
+    --ok:       #1f5c45;
+    --tag-bg:   #e5efe9;
+    --tag-text: #1f5c45;
+    --font-serif: 'Source Serif 4', Georgia, 'Times New Roman', serif;
+    --font-sans:  'Source Sans 3', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-mono:  'IBM Plex Mono', ui-monospace, Menlo, monospace;
   }
 
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  body { font-family: var(--font-sans); font-variant-numeric: lining-nums;
          background: var(--bg); color: var(--text); min-height: 100vh; }
 
   /* ── HEADER ── */
   .site-header {
     background: var(--surface);
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--rule);
     padding: 16px 32px;
     display: flex;
     align-items: center;
     gap: 12px;
     flex-wrap: wrap;
   }
-  .logo { font-size: 18px; font-weight: 700; letter-spacing: -0.02em; }
+  .logo { font-family: var(--font-serif); font-size: 26px; font-weight: 700; letter-spacing: -0.01em; line-height: 1; }
   .logo span { color: var(--accent); }
   .header-sub { font-size: 12px; color: var(--muted); margin-left: 4px; }
   .top-nav {
@@ -67,12 +76,12 @@
     font-size: 13px;
     font-weight: 600;
     padding: 7px 10px;
-    border-radius: 7px;
+    border-radius: 3px;
     cursor: pointer;
     text-decoration: none;
   }
   .nav-link:hover { color: var(--text); background: var(--bg); }
-  .nav-link.active { color: var(--accent); border-color: #c8d5f6; background: #eef4ff; }
+  .nav-link.active { color: var(--accent); border-color: transparent; background: var(--accent-soft); }
 
   /* ── SEARCH ── */
   .search-wrap {
@@ -81,7 +90,7 @@
     padding: 0 24px;
     text-align: center;
   }
-  .search-headline { font-size: 28px; font-weight: 700; margin-bottom: 8px; }
+  .search-headline { font-family: var(--font-serif); font-size: 34px; font-weight: 600; letter-spacing: -0.01em; margin-bottom: 8px; }
   .search-sub { font-size: 14px; color: var(--muted); margin-bottom: 28px; }
   .search-row { display: flex; gap: 8px; }
   .search-input {
@@ -89,9 +98,10 @@
     padding: 12px 16px;
     font-size: 16px;
     border: 1.5px solid var(--border);
-    border-radius: 8px;
+    border-radius: 3px;
     outline: none;
     text-transform: uppercase;
+    font-family: var(--font-mono);
     background: var(--surface);
     transition: border-color .15s;
   }
@@ -103,7 +113,7 @@
     background: var(--accent);
     color: #fff;
     border: none;
-    border-radius: 8px;
+    border-radius: 3px;
     cursor: pointer;
     transition: opacity .15s;
   }
@@ -128,7 +138,7 @@
   .error-box {
     background: #fff5f5;
     border: 1px solid #fca5a5;
-    border-radius: 8px;
+    border-radius: 3px;
     padding: 16px 20px;
     color: var(--danger);
     font-size: 14px;
@@ -143,7 +153,7 @@
     gap: 12px;
     margin-bottom: 4px;
   }
-  .fund-name { font-size: 22px; font-weight: 700; }
+  .fund-name { font-family: var(--font-serif); font-size: 26px; font-weight: 600; letter-spacing: -0.01em; }
   .fund-tag {
     font-size: 11px;
     font-weight: 600;
@@ -162,19 +172,19 @@
   .stat-card {
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: 3px;
     padding: 16px 20px;
   }
   .stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px; }
-  .stat-value { font-size: 26px; font-weight: 700; }
+  .stat-value { font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums lining-nums; }
   .stat-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
   .stat-value.danger { color: var(--danger); }
   .stat-value.warn   { color: var(--warn); }
-  .score-section { border-color: #d8dee8; }
+  .score-section { border-color: var(--border); }
   .score-layout { display: grid; grid-template-columns: 280px 1fr; gap: 18px; align-items: stretch; }
   .score-hero {
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: 3px;
     padding: 18px;
     background: var(--bg);
   }
@@ -189,7 +199,7 @@
   .score-weak, .score-distressed { color: var(--danger); }
   .score-summary { font-size: 13px; line-height: 1.5; margin-bottom: 12px; }
   .score-drivers { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
-  .driver-box { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--surface); }
+  .driver-box { border: 1px solid var(--border); border-radius: 3px; padding: 10px 12px; background: var(--surface); }
   .driver-title { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 6px; }
   .driver-box ul { margin-left: 16px; font-size: 12px; line-height: 1.45; }
   .score-method details { margin-top: 12px; font-size: 12px; color: var(--muted); }
@@ -202,22 +212,22 @@
   .section {
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: 3px;
     padding: 20px 24px;
     margin-bottom: 20px;
   }
   .section-title {
-    font-size: 13px;
+    font-family: var(--font-serif);
+    font-size: 18px;
     font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: .06em;
-    color: var(--muted);
+    letter-spacing: -0.005em;
+    color: var(--text);
     margin-bottom: 16px;
   }
 
   /* ── BUCKET CHARTS ── */
   .bucket-toggle-row { display: flex; justify-content: flex-end; margin-bottom: 8px; }
-  .mode-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .mode-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 3px; overflow: hidden; }
   .mode-btn {
     padding: 4px 12px;
     font-size: 11px;
@@ -234,7 +244,7 @@
   .chart-panel {
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: 3px;
     padding: 20px 24px;
   }
   .bucket-chart-wrap { height: 360px; }
@@ -255,7 +265,7 @@
     font-size: 12px;
     font-weight: 500;
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: 3px;
     cursor: pointer;
     background: var(--bg);
     transition: all .15s;
@@ -377,7 +387,7 @@
     color: var(--muted);
     background: var(--bg);
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: 3px;
     padding: 3px 8px;
     margin-left: 8px;
   }
@@ -391,7 +401,7 @@
     gap: 16px;
     margin-bottom: 18px;
   }
-  .map-title { font-size: 25px; font-weight: 750; }
+  .map-title { font-family: var(--font-serif); font-size: 28px; font-weight: 600; letter-spacing: -0.01em; }
   .map-sub { font-size: 13px; color: var(--muted); margin-top: 5px; max-width: 760px; line-height: 1.45; }
   .data-asof {
     font-size: 12px;
@@ -399,7 +409,7 @@
     white-space: nowrap;
     border: 1px solid var(--border);
     background: var(--surface);
-    border-radius: 7px;
+    border-radius: 3px;
     padding: 7px 10px;
     line-height: 1.45;
   }
@@ -414,7 +424,7 @@
     border: 1px solid var(--border);
     background: var(--surface);
     color: var(--text);
-    border-radius: 7px;
+    border-radius: 3px;
     padding: 8px 10px;
     font-size: 13px;
   }
@@ -422,7 +432,7 @@
     border: 1px solid var(--accent);
     background: var(--accent);
     color: #fff;
-    border-radius: 7px;
+    border-radius: 3px;
     padding: 8px 12px;
     font-size: 13px;
     font-weight: 700;
@@ -438,7 +448,7 @@
   .map-empty {
     border: 1px dashed var(--border);
     background: var(--surface);
-    border-radius: 10px;
+    border-radius: 3px;
     padding: 28px;
     text-align: center;
     color: var(--muted);
@@ -510,7 +520,7 @@
     color: var(--accent);
     background: var(--surface);
     border: 1.5px solid var(--accent);
-    border-radius: 7px;
+    border-radius: 3px;
     cursor: pointer;
     transition: all .15s;
     white-space: nowrap;
@@ -609,7 +619,7 @@
     .gains-tiles { gap: 8px; margin-bottom: 10px; }
     .realized-section { padding: 9px 14px; }
     .realized-section .section-title { margin-bottom: 10px; }
-    .realized-section .gains-tiles .stat-card { padding: 10px 12px; border-radius: 8px; }
+    .realized-section .gains-tiles .stat-card { padding: 10px 12px; border-radius: 3px; }
     .realized-section .gains-tiles .stat-label { font-size: 10px; margin-bottom: 3px; }
     .realized-section .gains-tiles .stat-value { font-size: 18px; line-height: 1.15; }
     .realized-section .gains-tiles .stat-sub { font-size: 10px; line-height: 1.25; }
@@ -697,6 +707,10 @@
 <div id="valueMapPage"></div>
 
 <script>
+if (window.Chart) {
+  Chart.defaults.font.family = "'Source Sans 3', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+  Chart.defaults.color = '#6b726c';
+}
 const LOCAL_API_ORIGIN = 'http://127.0.0.1:8000';
 const API_ORIGIN = window.location.protocol === 'file:' ? LOCAL_API_ORIGIN : '';
 const API = `${API_ORIGIN}/api/analyze`;
