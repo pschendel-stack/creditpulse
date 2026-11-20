@@ -166,8 +166,39 @@ INTERVAL_TICKER_CIK = {
 
 # ─── UTILITY ───────────────────────────────────────────────────────────────────
 
+# GICS industry groups (current and pre-2023 names) that some filers append to
+# investment identifiers, e.g. FSK's "Peraton Corp, Capital Goods 2".
+_GICS_INDUSTRY_GROUPS = (
+    r'Energy|Materials|Capital Goods|Commercial (?:&|and) Professional Services|Transportation|'
+    r'Automobiles (?:&|and) Components|Consumer Durables (?:&|and) Apparel|Consumer Services|'
+    r'Consumer Discretionary Distribution (?:&|and) Retail|Retailing|Media (?:&|and) Entertainment|'
+    r'Media|Food (?:&|and) Staples Retailing|Consumer Staples Distribution (?:&|and) Retail|'
+    r'Food,? Beverage (?:&|and) Tobacco|Household (?:&|and) Personal Products|'
+    r'Health Care Equipment (?:&|and) Services|Pharmaceuticals,? Biotechnology (?:&|and) Life Sciences|'
+    r'Banks|Diversified Financials|Financial Services|Insurance|Software (?:&|and) Services|'
+    r'Technology Hardware (?:&|and) Equipment|Semiconductors (?:&|and) Semiconductor Equipment|'
+    r'Telecommunication Services|Utilities|Real Estate|Real Estate Management (?:&|and) Development|'
+    r'Equity Real Estate Investment Trusts(?: \(REITs\))?'
+)
+_INDUSTRY_TAIL_RE = re.compile(r'\s*[,|]\s*(?:' + _GICS_INDUSTRY_GROUPS + r')(?:\s+\d+)?\s*$', re.IGNORECASE)
+
+
+def strip_industry_suffix(name: str) -> str:
+    """Drop the industry tail some inline-XBRL identifiers carry.
+
+    FSK has tagged the same position as "Peraton Corp, Capital Goods 2" (2025),
+    "Peraton Corp | Capital Goods 2" (10-K onward) and, in its HTML schedule,
+    plain "Peraton Corp". Without this, one borrower parsed from different
+    filings or by different methods never matches across quarters.
+    """
+    # Only an industry-group tail is removed: ARCC uses "|" for instrument
+    # detail ("Skywalker TopCo, LLC | Common units"), which must stay distinct.
+    n = _INDUSTRY_TAIL_RE.sub('', name).strip()
+    return n or name
+
+
 def normalize_name(name: str) -> str:
-    n = name.upper()
+    n = strip_industry_suffix(name).upper()
     n = re.sub(
         r'\b(LLC|INC\.?|CORP\.?|LTD\.?|L\.P\.?|LP|CO\.?|THE|HOLDINGS?|GROUP|MIDCO|'
         r'ACQUISITION|ACQUCO|PRODUCTS?|ENGINEERED|TECHNOLOGIES?|SYSTEMS?|SERVICES?|'
@@ -997,15 +1028,37 @@ def _ixbrl_facts_schedule(html_text: str, period: str, soup=None) -> tuple:
         candidates = [c for c in (strict, detail, loose) if c]
         if not candidates:
             return [], declared_total
-        return (min(candidates,
-                    key=lambda c: abs(sum(i["fv"] for i in c) - declared_total)),
-                declared_total)
+        misfit = lambda c: abs(sum(i["fv"] for i in c) - declared_total) / declared_total
+        best = min(candidates, key=misfit)
+        # Some filers re-tag holdings outside the schedule on the same axis. FSK's
+        # affiliated-investment roll-forward note repeats positions under plain
+        # names ("Global Jet Capital LLC") beside the schedule's own
+        # "Name | Industry N" identifiers, inflating Q3'26 to $13.8B against a
+        # stated $11.3B. Only when no rule reconciles, and most identifiers share
+        # the schedule's pipe format, try schedule-only variants. Gating on the
+        # misfit keeps filers that already reconcile (MAIN, ARCC) untouched.
+        if misfit(best) > 0.05:
+            narrowed = [c for c in map(_schedule_format_rows, candidates) if c]
+            best = min([best] + narrowed, key=misfit)
+        return best, declared_total
     # No stated total to reconcile against. Keep every position that carries some
     # valuation detail (principal, shares, or cost): this retains cost-only
     # equity/warrants while still excluding fair-value-only subtotal rows. The
     # strict rule alone would silently drop those warrants; the loose rule is the
     # last resort if nothing carries detail.
     return (detail or loose or strict, None)
+
+
+def _schedule_format_rows(invs: list) -> list:
+    """Rows in the schedule's "Name | Industry N" identifier format, when that format dominates.
+
+    Returns [] when there is nothing to filter (no mix of formats), so callers
+    can treat the result as an optional extra candidate.
+    """
+    piped = [i for i in invs if "|" in i["name"]]
+    if not piped or len(piped) == len(invs) or len(piped) < 0.5 * len(invs):
+        return []
+    return piped
 
 
 def _parse_ixbrl_number(tag) -> Optional[float]:
@@ -1973,7 +2026,7 @@ def _agg_borrowers(investments: list) -> dict:
             continue
         agg[norm]["fv"]    += fv
         agg[norm]["wmark"] += fv * mark
-        agg[norm]["names"].append(inv["name"])
+        agg[norm]["names"].append(strip_industry_suffix(inv["name"]))
 
     result = {}
     for norm, d in agg.items():
@@ -2074,7 +2127,7 @@ def compute_stress_positions(all_data: dict, quarters: list, min_fv_k: float = 1
                 continue
             by_norm[norm][qtr][0] += fv * mark
             by_norm[norm][qtr][1] += fv
-            by_norm[norm][qtr][2].append(inv["name"])
+            by_norm[norm][qtr][2].append(strip_industry_suffix(inv["name"]))
 
     companies = []
     for norm, qtr_map in by_norm.items():
