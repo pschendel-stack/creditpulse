@@ -351,6 +351,9 @@
     letter-spacing: .04em;
   }
   table.stress th:first-child { text-align: left; }
+  table.stress th.sortable { cursor: pointer; user-select: none; }
+  table.stress th.sortable:hover { color: var(--text); }
+  table.stress th.sorted { color: var(--accent); }
   table.stress td {
     padding: 6px 10px;
     border-bottom: 1px solid var(--border);
@@ -2412,36 +2415,84 @@ function showMatrix(idx) {
 }
 
 // ── STRESS TABLE ─────────────────────────────────────────────────────────────
-function renderStressTable(sp, qtrs) {
-  const sectionLabel = {
-    migrated: 'Newly Migrated',
-    stressed: 'Already Stressed',
-    new:      'New Position',
-  };
+const STRESS_SECTION_LABEL = {
+  migrated: 'Newly Migrated',
+  stressed: 'Already Stressed',
+  new:      'New Position',
+};
+// Columns: Company, one per quarter, Latest FV, Chg. Built per analysis because quarters vary.
+function stressColumns(qtrs) {
+  return [
+    { label: 'Company', value: c => c.name, text: true },
+    ...qtrs.map(q => ({ label: q, value: c => c.marks[q] })),
+    { label: 'Latest FV', value: c => c.latest_fv_k },
+    { label: 'Chg', value: c => c.chg },
+  ];
+}
+window._stressSort = { col: null, dir: 1 };
 
-  let html = `<div class="section stress-section">
+// Sorts within each group (Newly Migrated, Already Stressed, ...) so the group badges stay meaningful.
+function sortStressRows(sp, columns) {
+  const { col, dir } = window._stressSort;
+  if (col === null) return sp;
+  const column = columns[col];
+  const missing = v => v === null || v === undefined || v === '' || (!column.text && !isFiniteNumber(v));
+  const order = [];
+  const groups = {};
+  sp.forEach(c => {
+    if (!groups[c.section]) { groups[c.section] = []; order.push(c.section); }
+    groups[c.section].push(c);
+  });
+  return order.flatMap(sec => groups[sec].slice().sort((a, b) => {
+    const va = column.value(a), vb = column.value(b);
+    if (missing(va) || missing(vb)) return missing(va) - missing(vb);
+    const cmp = column.text ? String(va).localeCompare(String(vb)) : va - vb;
+    return cmp * dir;
+  }));
+}
+
+function sortStressTable(col) {
+  const s = window._stressSort;
+  const { sp, qtrs } = window._stressData || {};
+  if (!sp) return;
+  // First click: numbers high-to-low, text A-Z. Second click reverses.
+  if (s.col === col) s.dir = -s.dir;
+  else { s.col = col; s.dir = stressColumns(qtrs)[col].text ? 1 : -1; }
+  document.getElementById('stressTableWrap').innerHTML = renderStressTableInner(sp, qtrs);
+}
+
+function renderStressTable(sp, qtrs) {
+  window._stressData = { sp, qtrs };
+  window._stressSort = { col: null, dir: 1 };
+  return `<div class="section stress-section">
   <div class="section-title">Stressed Positions — Mark History</div>
   <p style="font-size:12px;color:var(--muted);margin-bottom:14px;">
-    FV-weighted average mark per borrower · mark &lt; 90 in latest quarter · minimum $100K FV
+    FV-weighted average mark per borrower · mark &lt; 90 in latest quarter · minimum $100K FV · click a column to sort
   </p>
-  <div style="overflow-x:auto">
-  <table class="stress">
-    <thead>
-      <tr>
-        <th style="text-align:left;min-width:220px">Company</th>
-        ${qtrs.map(q => `<th>${q}</th>`).join('')}
-        <th>Latest FV</th>
-        <th>Chg</th>
-      </tr>
-    </thead>
+  <div style="overflow-x:auto" id="stressTableWrap">${renderStressTableInner(sp, qtrs)}</div></div>`;
+}
+
+function renderStressTableInner(sp, qtrs) {
+  const columns = stressColumns(qtrs);
+  const rows = sortStressRows(sp, columns);
+  const { col: sortCol, dir: sortDir } = window._stressSort;
+  const header = columns.map((c, i) => {
+    const arrow = i === sortCol ? (sortDir > 0 ? ' ▲' : ' ▼') : '';
+    const aria = i === sortCol ? (sortDir > 0 ? 'ascending' : 'descending') : 'none';
+    const style = i === 0 ? ' style="text-align:left;min-width:220px"' : '';
+    return `<th class="sortable${i === sortCol ? ' sorted' : ''}" aria-sort="${aria}"${style} onclick="sortStressTable(${i})" title="Sort by ${c.label}">${c.label}${arrow}</th>`;
+  }).join('');
+
+  let html = `<table class="stress">
+    <thead><tr>${header}</tr></thead>
     <tbody>`;
 
   let lastSection = null;
 
-  sp.forEach(c => {
+  rows.forEach(c => {
     if (c.section !== lastSection) {
       html += `<tr class="section-row"><td colspan="${qtrs.length + 3}" style="padding:10px 10px 4px;border-bottom:1px solid var(--border)">
-        <span class="section-badge ${c.section}">${sectionLabel[c.section] || c.section}</span>
+        <span class="section-badge ${c.section}">${STRESS_SECTION_LABEL[c.section] || c.section}</span>
       </td></tr>`;
       lastSection = c.section;
     }
@@ -2465,7 +2516,7 @@ function renderStressTable(sp, qtrs) {
     </tr>`;
   });
 
-  html += `</tbody></table></div></div>`;
+  html += `</tbody></table>`;
   return html;
 }
 
