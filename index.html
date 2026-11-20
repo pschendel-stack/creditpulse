@@ -2415,11 +2415,14 @@ function showMatrix(idx) {
 }
 
 // ── STRESS TABLE ─────────────────────────────────────────────────────────────
-const STRESS_SECTION_LABEL = {
-  migrated: 'Newly Migrated',
-  stressed: 'Already Stressed',
-  new:      'New Position',
+// The API still tags rows migrated / stressed / new. The table merges the first
+// two into one group (held since the first quarter shown) so they sort together;
+// the first-quarter mark column still shows whether a position started below 90.
+const STRESS_GROUPS = {
+  existing: { label: 'Existing Positions', badge: 'stressed' },
+  new:      { label: 'New Positions',      badge: 'new' },
 };
+const stressGroup = c => (c.section === 'new' ? 'new' : 'existing');
 // Columns: Company, one per quarter, Latest FV, Chg. Built per analysis because quarters vary.
 function stressColumns(qtrs) {
   return [
@@ -2431,19 +2434,19 @@ function stressColumns(qtrs) {
 }
 window._stressSort = { col: null, dir: 1 };
 
-// Sorts within each group (Newly Migrated, Already Stressed, ...) so the group badges stay meaningful.
+// Sorts within each group (Existing, New) so the group badges stay meaningful.
+// Unsorted, rows run from lowest latest mark up, as the API ordered each old group.
 function sortStressRows(sp, columns) {
   const { col, dir } = window._stressSort;
-  if (col === null) return sp;
+  const groups = { existing: [], new: [] };
+  sp.forEach(c => groups[stressGroup(c)].push(c));
+  if (col === null) {
+    const byMark = (a, b) => (a.latest_mark ?? Infinity) - (b.latest_mark ?? Infinity);
+    return [...groups.existing.slice().sort(byMark), ...groups.new];
+  }
   const column = columns[col];
   const missing = v => v === null || v === undefined || v === '' || (!column.text && !isFiniteNumber(v));
-  const order = [];
-  const groups = {};
-  sp.forEach(c => {
-    if (!groups[c.section]) { groups[c.section] = []; order.push(c.section); }
-    groups[c.section].push(c);
-  });
-  return order.flatMap(sec => groups[sec].slice().sort((a, b) => {
+  return ['existing', 'new'].flatMap(g => groups[g].slice().sort((a, b) => {
     const va = column.value(a), vb = column.value(b);
     if (missing(va) || missing(vb)) return missing(va) - missing(vb);
     const cmp = column.text ? String(va).localeCompare(String(vb)) : va - vb;
@@ -2490,11 +2493,12 @@ function renderStressTableInner(sp, qtrs) {
   let lastSection = null;
 
   rows.forEach(c => {
-    if (c.section !== lastSection) {
+    const group = stressGroup(c);
+    if (group !== lastSection) {
       html += `<tr class="section-row"><td colspan="${qtrs.length + 3}" style="padding:10px 10px 4px;border-bottom:1px solid var(--border)">
-        <span class="section-badge ${c.section}">${STRESS_SECTION_LABEL[c.section] || c.section}</span>
+        <span class="section-badge ${STRESS_GROUPS[group].badge}">${STRESS_GROUPS[group].label}</span>
       </td></tr>`;
-      lastSection = c.section;
+      lastSection = group;
     }
 
     const fvStr = c.latest_fv_k >= 1000
